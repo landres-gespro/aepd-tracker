@@ -27,15 +27,14 @@ jobs:
       - name: 4. Ejecutar el Script
         run: python src/scraper.py
 
-      - name: 5. Guardar los nuevos datos en GitHub (Solo si existen)
+      - name: 5. Guardar los nuevos datos y pruebas forenses en GitHub
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if [ -f "data/resultados.csv" ]; then
-            git add data/resultados.csv
-            git commit -m "Actualizacion automatica de resoluciones AEPD" || echo "No hay cambios en el CSV"
-            git push
-          else
-            echo "⚠️ El archivo no se creó."
-          fi
+          # Añadimos TODA la carpeta data/ (incluirá el CSV, el HTML y el PNG)
+          git add data/
+          
+          # Si hay cambios, los sube.
+          git commit -m "Actualizacion automatica / Forense AEPD" || echo "No hay cambios"
+          git push
