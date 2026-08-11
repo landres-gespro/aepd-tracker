@@ -65,7 +65,7 @@ def main():
             df[col] = ""
             
     # Buscamos solo las filas que NO han sido analizadas aún
-    mask = df['Tematica_IA'] == ""
+    mask = (df['Tematica_IA'] == "") | (df['Tematica_IA'] == "Error de procesamiento")
     rows_to_process = df[mask]
     
     print(f"🚀 Encontradas {len(rows_to_process)} resoluciones pendientes de análisis IA.")
