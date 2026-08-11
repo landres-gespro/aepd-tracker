@@ -9,6 +9,8 @@ import requests
 
 BASE_URL = "https://www.aepd.es/informes-y-resoluciones/resoluciones"
 DATA_FILE = "data/resultados.csv"
+DEBUG_HTML = "data/debug.html"
+DEBUG_PNG = "data/debug.png"
 
 def get_latest_pdfs(limit=2):
     url = f"{BASE_URL}?page=1"
@@ -17,7 +19,6 @@ def get_latest_pdfs(limit=2):
     try:
         print(f"🚀 Lanzando navegador invisible (Playwright)...")
         with sync_playwright() as p:
-            # Lanzamos un navegador headless (sin interfaz visual)
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -25,20 +26,38 @@ def get_latest_pdfs(limit=2):
             page = context.new_page()
             
             print(f"🔍 Navegando a: {url}")
-            # Esperamos a que la web cargue por completo (incluyendo JS)
-            page.goto(url, wait_until="networkidle")
+            # Cambiamos la espera: domcontentloaded es más rápido, luego añadimos espera manual
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            
+            # ⏱️ Esperamos 5 segundos extra por si hay scripts de seguridad cargando
+            print("⏱️ Esperando 5 segundos a que termine de cargar el JS...")
+            page.wait_for_timeout(5000) 
             
             html = page.content()
+            
+            # 📸 CAPTURA DE PANTALLA FORENSE
+            os.makedirs("data", exist_ok=True)
+            page.screenshot(path=DEBUG_PNG)
+            print(f"📸 Captura de pantalla guardada en {DEBUG_PNG}")
+            
             browser.close()
             
         print(f"📡 Navegación completada. Analizando HTML...")
+        
+        # 💾 GUARDAR HTML FORENSE
+        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
+            f.write(html)
+        print(f"📄 HTML guardado en {DEBUG_HTML}")
+        print(f"👀 Primeros 500 caracteres del HTML recibido:\n{html[:500]}...")
+        
         soup = BeautifulSoup(html, 'html.parser')
         
-        links = soup.find_all('a', href=True)
-        print(f"🔗 Analizando {len(links)} enlaces totales en el HTML recibido.")
+        # Buscamos CUALQUIER enlace, no solo los .pdf
+        all_links = soup.find_all('a')
+        print(f"🔗 Analizando {len(all_links)} enlaces totales <a> en el HTML.")
         
-        for a in links:
-            href = a['href']
+        for a in all_links:
+            href = a.get('href', '')
             if href.lower().endswith('.pdf'):
                 pdf_urls.append(urllib.parse.urljoin(BASE_URL, href))
                 if len(pdf_urls) >= limit:
@@ -54,9 +73,7 @@ def extract_text_from_memory(pdf_url):
     pdf_bytes = None
     try:
         print(f"⬇️ Descargando PDF (vía rápida)...")
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(pdf_url, headers=headers, timeout=30)
         response.raise_for_status()
         pdf_bytes = response.content
