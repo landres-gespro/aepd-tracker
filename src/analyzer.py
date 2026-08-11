@@ -38,7 +38,7 @@ TEXTO DE LA RESOLUCIÓN:
                 {"role": "system", "content": "Eres un asistente legal experto. Devuelve SOLO un JSON válido."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.1-70b-versatile", # Modelo potentísimo y rápido
+            model="llama-3.3-70b-versatile", # Modelo potentísimo y rápido
             response_format={"type": "json_object"} # Obliga a la IA a devolver JSON
         )
         
