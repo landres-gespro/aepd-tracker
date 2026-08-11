@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 CSV_FILE = "data/resultados.csv"
 # Procesaremos 15 resoluciones por ejecución para no reventar el límite diario de Groq
-BATCH_SIZE = 15 
+BATCH_SIZE = 25 
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
