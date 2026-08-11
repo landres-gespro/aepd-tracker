@@ -27,10 +27,15 @@ jobs:
       - name: 4. Ejecutar el Bot RSS
         run: python src/scraper.py
 
-      - name: 5. Guardar los nuevos datos en GitHub
+      - name: 5. Analizar con Inteligencia Artificial
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python src/analyzer.py
+
+      - name: 6. Guardar los nuevos datos en GitHub
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/
-          git commit -m "Actualizacion automatica de resoluciones via RSS" || echo "No hay resoluciones nuevas hoy"
+          git commit -m "Actualizacion automatica y analisis IA" || echo "No hay resoluciones nuevas hoy"
           git push
