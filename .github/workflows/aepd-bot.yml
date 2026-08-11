@@ -17,10 +17,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 3. Instalar librerías
+      - name: 3. Instalar librerías y Navegador Fantasma
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Esta línea descarga Google Chrome en el servidor de GitHub
+          playwright install --with-deps chromium
 
       - name: 4. Ejecutar el Script
         run: python src/scraper.py
@@ -30,11 +32,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Verificamos si el archivo existe antes de hacer add
           if [ -f "data/resultados.csv" ]; then
             git add data/resultados.csv
             git commit -m "Actualizacion automatica de resoluciones AEPD" || echo "No hay cambios en el CSV"
             git push
           else
-            echo "⚠️ El archivo data/resultados.csv no se creó. Probablemente la AEPD bloqueó la conexión o no hay PDFs."
+            echo "⚠️ El archivo no se creó."
           fi
