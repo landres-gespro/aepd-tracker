@@ -3,3 +3,6 @@ beautifulsoup4
 lxml
 pymupdf
 feedparser
+pandas
+groq
+pydantic
