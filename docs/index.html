@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Observatorio AEPD | Dashboard Legal</title>
+    <!-- Bootstrap para diseño moderno -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- DataTables para tablas inteligentes con búsqueda -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    <style>
+        body { padding: 20px; background-color: #f4f6f9; font-family: system-ui, -apple-system, sans-serif; }
+        .header-box { background: linear-gradient(135deg, #0d6efd, #0a58ca); color: white; padding: 30px; border-radius: 15px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}
+        .badge-ai { background-color: #198754; font-weight: normal; font-size: 0.85em; }
+        .card { border: none; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="container-fluid">
+        <div class="header-box">
+            <h1>🏛️ Observatorio de Resoluciones AEPD</h1>
+            <p class="lead mb-0">Base de datos jurídica enriquecida con Inteligencia Artificial. Actualización diaria automática.</p>
+        </div>
+        
+        <div class="card">
+            <div class="card-body">
+                <table id="tablaAEPD" class="table table-striped table-hover" style="width:100%">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Expediente</th>
+                            <th>Temática (IA)</th>
+                            <th>Resolución Final</th>
+                            <th>Resumen Ejecutivo</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-body">
+                        <tr><td colspan="5" class="text-center py-4">⏳ Conectando con la base de datos en GitHub...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Librerías JS -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <!-- PapaParse: La magia para leer CSVs desde el navegador -->
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+    <script>
+        // URL RAW de tu CSV en GitHub
+        const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
+
+        Papa.parse(csvUrl, {
+            download: true,
+            header: true,
+            skipEmptyLines: true,
+            complete: function(results) {
+                const tbody = document.getElementById('tabla-body');
+                tbody.innerHTML = ''; // Limpiar mensaje de carga
+
+                let count = 0;
+                results.data.forEach(row => {
+                    if(row.Titulo && row.Titulo !== "") {
+                        count++;
+                        const link = row.Link_PDF ? `<a href="${row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver Original 📄</a>` : '';
+                        
+                        // Embellecer los datos de la IA
+                        const tematica = row.Tematica_IA ? `<span class="badge bg-success badge-ai">${row.Tematica_IA}</span>` : '<span class="badge bg-secondary">Pendiente IA</span>';
+                        const resolucion = row.Resolucion_IA || '<em class="text-muted">En cola...</em>';
+                        const resumen = row.Resumen_IA ? row.Resumen_IA.substring(0, 150) + '...' : '<em class="text-muted">En cola...</em>';
+                        
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><strong>${row.Titulo}</strong></td>
+                            <td>${tematica}</td>
+                            <td>${resolucion}</td>
+                            <td><small>${resumen}</small></td>
+                            <td>${link}</td>
+                        `;
+                        tbody.appendChild(tr);
+                    }
+                });
+
+                // Inicializar DataTables (Añade buscador, paginación y ordenación)
+                $('#tablaAEPD').DataTable({
+                    language: {
+                        url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json',
+                        info: "Mostrando _TOTAL_ resoluciones analizadas"
+                    },
+                    pageLength: 25,
+                    order: [[0, 'desc']]
+                });
+                
+                console.log(`Cargadas ${count} resoluciones.`);
+            },
+            error: function(err) {
+                console.error("Error:", err);
+                document.getElementById('tabla-body').innerHTML = '<tr><td colspan="5" class="text-danger text-center">Error al leer el CSV. Asegúrate de que data/resultados.csv es público.</td></tr>';
+            }
+        });
+    </script>
+</body>
+</html>
