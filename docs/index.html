@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+    <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -69,7 +69,12 @@
                         const link = row.Link_PDF ? `<a href="${row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver Original 📄</a>` : '';
                         
                         // Embellecer los datos de la IA
-                        const tematica = row.Tematica_IA ? `<span class="badge bg-success badge-ai">${row.Tematica_IA}</span>` : '<span class="badge bg-secondary">Pendiente IA</span>';
+                        let tematica;
+                        if (row.Tematica_IA && row.Tematica_IA !== "Error de procesamiento") {
+                            tematica = `<span class="badge bg-success badge-ai">${row.Tematica_IA}</span>`;
+                        } else {
+                            tematica = '<span class="badge bg-warning text-dark">⏳ Pendiente IA</span>';
+                        }
                         const resolucion = row.Resolucion_IA || '<em class="text-muted">En cola...</em>';
                         const resumen = row.Resumen_IA ? row.Resumen_IA.substring(0, 150) + '...' : '<em class="text-muted">En cola...</em>';
                         
