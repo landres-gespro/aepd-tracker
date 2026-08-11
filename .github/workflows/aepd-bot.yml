@@ -8,33 +8,168 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    steps:
-      - name: 1. Clonar el repositorio
-        uses: actions/checkout@v4
+    permissions:
+      contents: write #
+</think>
 
-      - name: 2. Instalar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+¡Perfecto! Ya estamos muy cerca. La primera prueba ha sido un éxito técnico: **hemos conseguido entrar en la web de la AEPD con Playwright**. 
 
-      - name: 3. Instalar librerías y Navegador Fantasma
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # Esta línea descarga Google Chrome en el servidor de GitHub
-          playwright install --with-deps chromium
+Al ver tu archivo `debug.png` y `debug.html`, se confirma lo que sospechábamos: **La web de la AEPD está construida con Angular (es una Single Page Application - SPA).**
 
-      - name: 4. Ejecutar el Script
-        run: python src/scraper.py
+### 🕵️ El Diagnóstico Forense
+Si miras el `debug.html`, verás que apenas hay contenido. Solo hay una etiqueta:
+`<app-root></app-root>` y muchos archivos `.js` (`runtime...js`, `polyfills...js`).
 
-      - name: 5. Guardar los nuevos datos y pruebas forenses en GitHub
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Añadimos TODA la carpeta data/ (incluirá el CSV, el HTML y el PNG)
-          git add data/
-          
-          # Si hay cambios, los sube.
-          git commit -m "Actualizacion automatica / Forense AEPD" || echo "No hay cambios"
-          git push
+**¿Qué significa esto?**
+Cuando vas a la web en tu navegador normal, el navegador descarga esos archivos `.js` (que pesan varios Megabytes) y los ejecuta. Esos scripts son los que "dibujan" la lista de resoluciones en pantalla y hacen las consultas a la base de datos. 
+
+Nuestro bot (Playwright) entró, vio el esqueleto vacío (`<app-root></app-root>`) y se fue antes de que los scripts tuvieran tiempo de terminar de "pintar" los PDFs en la pantalla. 
+
+Además, las webs en Angular no usan la URL tradicional `?page=1`. Usan un sistema interno para pedirle los datos a su API sin recargar la página.
+
+---
+
+### 🚀 PASO 4: Dejar de buscar en el HTML y empezar a buscar en la "Matrix"
+
+En lugar de esperar a que la web "pinte" los enlaces y luego leerlos, vamos a hacer un truco de hacker legal: **Vamos a interceptar las llamadas internas que hace la web de la AEPD a su propia base de datos**.
+
+Cuando entras en la web, hay un script oculto que le dice a la base de datos: *"Dame las últimas 10 resoluciones en formato JSON"*. Si capturamos esa llamada, obtenemos los datos limpios, sin tener que lidiar con el HTML ni con bloqueos visuales.
+
+Sustituye el contenido de **`src/scraper.py`** por este nuevo enfoque. He añadido un "sniffer" (rastreador) de red dentro del navegador fantasma.
+
+```python
+import os
+import sys
+import csv
+import json
+import urllib.parse
+import pymupdf
+from playwright.sync_api import sync_playwright
+import requests
+
+# Ya no buscamos en el HTML, interceptamos la API oculta
+BASE_URL = "https://www.aepd.es/informes-y-resoluciones/resoluciones"
+DATA_FILE = "data/resultados.csv"
+
+def get_latest_pdfs(limit=2):
+    pdf_urls = []
+    
+    try:
+        print(f"🚀 Lanzando navegador e interceptando llamadas a la API...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context()
+            page = context.new_page()
+            
+            # 🕵️ AQUÍ ESTÁ LA MAGIA: Interceptamos las respuestas de la red
+            def handle_response(response):
+                url = response.url
+                status = response.status
+                print(f"📡 [RED] Petición detectada: {status} -> {url}")
+                
+                # Buscamos llamadas a APIs o archivos JSON que contengan 'resolucion' o 'documento'
+                if ("api" in url.lower() or ".json" in url.lower() or "buscar" in url.lower() or "catalogo" in url.lower()):
+                    try:
+                        # Intentamos leer si la respuesta es JSON
+                        if "application/json" in response.headers.get('content-type', ''):
+                            print(f"🎯 ¡POSIBLE API ENCONTRADA! Leyendo JSON...")
+                            body = response.json()
+                            print(f"📦 Contenido del JSON (Primeros 500 chars): {str(body)[:500]}")
+                    except Exception as e:
+                        pass # Si no es JSON válido, lo ignoramos
+            
+            # Escuchamos todas las peticiones de red que hace la página
+            page.on("response", handle_response)
+            
+            print(f"🔍 Navegando a: {BASE_URL}")
+            page.goto(BASE_URL, wait_until="networkidle", timeout=90000)
+            
+            print("⏱️ Esperando 10 segundos extra para que Angular termine de cargar datos...")
+            page.wait_for_timeout(10000) 
+            
+            # Como respaldo, seguimos buscando enlaces PDF en el HTML final por si acaso
+            html = page.content()
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, 'html.parser')
+            links = soup.find_all('a', href=True)
+            print(f"🔗 Enlaces <a> encontrados en el HTML final: {len(links)}")
+            
+            for a in links:
+                href = a.get('href', '')
+                if href.lower().endswith('.pdf'):
+                    pdf_urls.append(urllib.parse.urljoin(BASE_URL, href))
+                    if len(pdf_urls) >= limit:
+                        break
+                        
+            browser.close()
+            
+        print(f"📄 PDFs encontrados vía HTML: {len(pdf_urls)}")
+        return pdf_urls
+    except Exception as e:
+        print(f"❌ Error en el navegador: {e}")
+        return []
+
+def extract_text_from_memory(pdf_url):
+    pdf_bytes = None
+    try:
+        print(f"⬇️ Descargando PDF (vía rápida)...")
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        response = requests.get(pdf_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        pdf_bytes = response.content
+    except Exception as e:
+        print(f"⚠️ Descarga rápida falló ({e}). Usando navegador...")
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+                res = page.request.get(pdf_url)
+                pdf_bytes = res.body()
+                browser.close()
+        except Exception as e2:
+            print(f"❌ Error total leyendo PDF: {e2}")
+            return ""
+
+    if not pdf_bytes:
+        return ""
+
+    try:
+        print(f"📖 Extrayendo texto del PDF...")
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        text = ""
+        for page_num in doc:
+            text += page_num.get_text()
+        return text
+    except Exception as e:
+        print(f"❌ Error procesando el PDF: {e}")
+        return ""
+
+def save_to_csv(filename, text):
+    if not text:
+        print("⚠️ No hay texto para guardar.")
+        return
+    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+    file_exists = os.path.isfile(DATA_FILE)
+    with open(DATA_FILE, mode='a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            writer.writerow(["Archivo", "Texto_Extraido"])
+        clean_text = text.replace('\n', ' ').replace('\r', ' ')
+        writer.writerow([filename, clean_text[:1000] + "... [RESTO OMITIDO]"])
+    print(f"💾 Guardado en {DATA_FILE}")
+
+def main():
+    print("🤖 Iniciando batida rápida en AEPD...")
+    pdfs = get_latest_pdfs(limit=2)
+    if not pdfs:
+        print("🛑 No se encontraron PDFs vía HTML. Revisa los logs de [RED] para ver si encontramos la API.")
+        sys.exit(0) 
+    for pdf_url in pdfs:
+        filename = pdf_url.split('/')[-1]
+        print(f"Procesando {filename}...")
+        text = extract_text_from_memory(pdf_url)
+        save_to_csv(filename, text)
+    print("✅ Extracción completada.")
+
+if __name__ == "__main__":
+    main()
