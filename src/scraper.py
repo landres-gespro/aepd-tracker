@@ -1,27 +1,25 @@
 import os
-import requests
-from bs4 import BeautifulSoup
-import urllib.parse
-import fitz
-import csv
 import sys
+import csv
+import urllib.parse
+import fitz # PyMuPDF
+from bs4 import BeautifulSoup
+
+# IMPORTANTE: Usamos curl_cffi en lugar de requests normal
+# Esta librería imita el comportamiento de Chrome para saltar bloqueos 403
+from curl_cffi import requests 
 
 BASE_URL = "https://www.aepd.es/informes-y-resoluciones/resoluciones"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "es-ES,es;q=0.5",
-}
 DATA_FILE = "data/resultados.csv"
 
 def get_latest_pdfs(limit=2):
     url = f"{BASE_URL}?page=1"
     try:
-        print(f"🔍 Conectando a: {url}")
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        print(f"🔍 Conectando a la AEPD usando modo Stealth (Chrome)...")
+        # impersonate="chrome" es la magia que engaña al firewall
+        response = requests.get(url, impersonate="chrome", timeout=20)
         print(f"📡 Código de respuesta HTTP: {response.status_code}")
         
-        # Si la web nos bloquea (403) o falla, guardamos el HTML para investigar
         if response.status_code != 200:
             print(f"❌ La web respondió con código: {response.status_code}")
             os.makedirs("data", exist_ok=True)
@@ -32,9 +30,8 @@ def get_latest_pdfs(limit=2):
         soup = BeautifulSoup(response.text, 'html.parser')
         pdf_urls = []
         
-        # Contamos cuántos enlaces <a> hay en total en la página
         links = soup.find_all('a', href=True)
-        print(f"🔗 Encontrados {len(links)} enlaces totales en el HTML recibido.")
+        print(f"🔗 Analizando {len(links)} enlaces totales en el HTML recibido.")
         
         for a in links:
             href = a['href']
@@ -43,16 +40,16 @@ def get_latest_pdfs(limit=2):
                 if len(pdf_urls) >= limit:
                     break
                     
-        print(f"📄 Encontrados {len(pdf_urls)} PDFs válidos.")
+        print(f"📄 ¡Éxito! Encontrados {len(pdf_urls)} PDFs válidos.")
         return pdf_urls
     except Exception as e:
-        print(f"❌ Error buscando PDFs: {e}")
+        print(f"❌ Error de conexión: {e}")
         return []
 
 def extract_text_from_memory(pdf_url):
     try:
         print(f"⬇️ Descargando PDF...")
-        response = requests.get(pdf_url, headers=HEADERS, stream=True, timeout=30)
+        response = requests.get(pdf_url, impersonate="chrome", timeout=30)
         response.raise_for_status()
         
         print(f"📖 Extrayendo texto del PDF...")
@@ -88,8 +85,8 @@ def main():
     pdfs = get_latest_pdfs(limit=2)
     
     if not pdfs:
-        print("🛑 No se encontraron PDFs. El script termina sin crear el CSV.")
-        sys.exit(0) # Terminamos el script con éxito (exit code 0) pero sin archivo
+        print("🛑 No se encontraron PDFs. El script termina.")
+        sys.exit(0) 
     
     for pdf_url in pdfs:
         filename = pdf_url.split('/')[-1]
