@@ -74,7 +74,6 @@
 <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"></script>
 
 <script>
 const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
@@ -86,6 +85,11 @@ let engineReady = false;
 function setStatus(msg){ document.getElementById('semantic-status').innerHTML = msg; }
 function setQuery(q){ document.getElementById('semantic-query').value = q; buscarSimilares(); }
 function dot(a,b){ let s=0; for(let i=0;i<a.length;i++){ s+=a[i]*b[i]; } return s; }
+async function loadTransformers(){
+    // Si la librería ya está en memoria, la usamos; si no, la importamos como módulo ES
+    if (window.transformers && window.transformers.pipeline) return window.transformers;
+    return await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/+esm');
+}
 
 async function embedText(text){
     const out = await embedder(text, { pooling: 'mean', normalize: true });
@@ -116,7 +120,7 @@ document.getElementById('tabla-body').addEventListener('click', function(e){
 async function initSemanticEngine(rows){
     try {
         setStatus('🧠 Cargando motor semántico multilingüe (la primera vez descarga ~50 MB y queda en caché)...');
-        const { pipeline } = window.transformers;
+        const pipeline = (await loadTransformers()).pipeline;
         embedder = await pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2', { quantized: true });
 
         docVectors = [];
