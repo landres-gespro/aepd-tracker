@@ -85,8 +85,9 @@ let engineReady = false;
 function setStatus(msg){ document.getElementById('semantic-status').innerHTML = msg; }
 function setQuery(q){ document.getElementById('semantic-query').value = q; buscarSimilares(); }
 function dot(a,b){ let s=0; for(let i=0;i<a.length;i++){ s+=a[i]*b[i]; } return s; }
+
+// Cargador universal de la librería de IA (import dinámico, a prueba de fallos)
 async function loadTransformers(){
-    // Si la librería ya está en memoria, la usamos; si no, la importamos como módulo ES
     if (window.transformers && window.transformers.pipeline) return window.transformers;
     return await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/+esm');
 }
@@ -103,7 +104,7 @@ function docText(row){
         .slice(0, 1800);
 }
 
-// Botón "+ ampliar" de los resúmenes (delegado: funciona aunque DataTables redibuje la tabla)
+// Botón "+ ampliar" de los resúmenes
 document.getElementById('tabla-body').addEventListener('click', function(e){
     if (e.target.classList.contains('toggle-resumen')) {
         e.preventDefault();
@@ -209,13 +210,11 @@ Papa.parse(csvUrl, {
                     tematica = '<span class="badge bg-warning text-dark">⏳ Pendiente IA</span>';
                 }
 
-                // Palabras clave como etiquetas
                 const pcls = (row.PalabrasClave_IA || "").split(/,\s*/).filter(Boolean).slice(0, 6);
                 const kwHtml = pcls.length
                     ? pcls.map(p => `<span class="badge bg-light text-dark border kw-badge me-1">${p}</span>`).join("")
                     : '<em class="text-muted">—</em>';
 
-                // Resumen con botón "+ ampliar"
                 const fullResumen = row.Resumen_IA || "";
                 const shortResumen = fullResumen.length > 260 ? fullResumen.substring(0, 260) + "…" : fullResumen;
                 const hasMore = fullResumen.length > 260;
