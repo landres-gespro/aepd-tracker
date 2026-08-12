@@ -55,7 +55,7 @@
     <div class="header-box">
         <h1>🏛️ Observatorio de Resoluciones AEPD</h1>
         <p class="lead mb-0">Base de datos jurídica con IA (2016-hoy). Búsqueda semántica de casos similares.</p>
-        <div class="small mt-2">
+        <div class="small mt-2 d-none" id="admin-tools">
             <a href="#" id="btn-adduser" class="text-white-50 me-3">➕ Añadir usuario</a>
             <a href="#" id="btn-newpass" class="text-white-50">🔑 Cambiar contraseña</a>
         </div>
@@ -145,7 +145,8 @@ const AUTH_USERS = {
     "landres": "897cde46bb296fe9a6e39f2b540fbc4f72a2e4e38be1ce05d59b49987d977f6d",
     "mvillacorta": "e6c880142b83a34610040f79a00c2aeae827a03905af16777bcf1691633a080a",
 };
-
+// 👑 Único usuario que ve los botones de gestión (➕ y 🔑)
+const ADMIN_USER = "landres";
 const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
 const historyBase = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/history/textos_";
 
@@ -167,6 +168,9 @@ const modoConfig = Object.keys(AUTH_USERS).length === 0;
 function unlockApp(user){
     const ov = document.getElementById('auth-overlay');
     if (ov) ov.remove();
+    if (user === ADMIN_USER) {
+        document.getElementById('admin-tools').classList.remove('d-none');
+    }
     startApp();
 }
 
