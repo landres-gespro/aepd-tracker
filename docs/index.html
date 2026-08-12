@@ -1,112 +1,249 @@
-    <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Observatorio AEPD | Dashboard Legal</title>
-    <!-- Bootstrap para diseño moderno -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- DataTables para tablas inteligentes con búsqueda -->
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
     <style>
         body { padding: 20px; background-color: #f4f6f9; font-family: system-ui, -apple-system, sans-serif; }
-        .header-box { background: linear-gradient(135deg, #0d6efd, #0a58ca); color: white; padding: 30px; border-radius: 15px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}
-        .badge-ai { background-color: #198754; font-weight: normal; font-size: 0.85em; }
-        .card { border: none; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 10px; }
+        .header-box { background: linear-gradient(135deg, #0d6efd, #0a58ca); color: white; padding: 30px; border-radius: 15px; margin-bottom: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}
+        .card { border: none; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 10px; margin-bottom: 25px; }
+        .badge-ai { font-weight: normal; font-size: 0.85em; }
+        .chip { cursor: pointer; }
+        .result-card { border-left: 4px solid #198754; }
+        .sim-bar { height: 6px; border-radius: 3px; background: #e9ecef; }
+        .sim-fill { height: 6px; border-radius: 3px; background: linear-gradient(90deg, #198754, #20c997); }
+        #semantic-status { font-size: 0.85rem; }
+        .kw-badge { font-weight: normal; font-size: 0.75em; }
+        .toggle-resumen { font-size: 0.75em; text-decoration: none; }
     </style>
 </head>
 <body>
+<div class="container-fluid">
 
-    <div class="container-fluid">
-        <div class="header-box">
-            <h1>🏛️ Observatorio de Resoluciones AEPD</h1>
-            <p class="lead mb-0">Base de datos jurídica enriquecida con Inteligencia Artificial. Actualización diaria automática.</p>
-        </div>
-        
-        <div class="card">
-            <div class="card-body">
-                <table id="tablaAEPD" class="table table-striped table-hover" style="width:100%">
-                    <thead class="table-dark">
-                        <tr>
-                            <th>Expediente</th>
-                            <th>Temática (IA)</th>
-                            <th>Resolución Final</th>
-                            <th>Resumen Ejecutivo</th>
-                            <th>Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tabla-body">
-                        <tr><td colspan="5" class="text-center py-4">⏳ Conectando con la base de datos en GitHub...</td></tr>
-                    </tbody>
-                </table>
+    <div class="header-box">
+        <h1>🏛️ Observatorio de Resoluciones AEPD</h1>
+        <p class="lead mb-0">Base de datos jurídica con IA. Búsqueda semántica de casos similares.</p>
+    </div>
+
+    <!-- 🔎 BUSCADOR INTELIGENTE -->
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">🔎 Buscador Inteligente de Casos Similares</h5>
+            <p class="text-muted small mb-2">Describe tu caso en lenguaje natural. La IA entenderá el significado, no solo las palabras.</p>
+            <div class="input-group mb-2">
+                <input type="text" id="semantic-query" class="form-control" placeholder='Ej.: "videovigilancia en baños", "grabación de llamadas telefónicas"...'>
+                <button class="btn btn-primary" type="button" onclick="buscarSimilares()">Buscar casos similares</button>
             </div>
+            <div class="mb-2">
+                <span class="badge bg-light text-dark border chip" onclick="setQuery('videovigilancia en baños')">videovigilancia en baños</span>
+                <span class="badge bg-light text-dark border chip" onclick="setQuery('grabación de llamadas telefónicas')">grabación de llamadas</span>
+                <span class="badge bg-light text-dark border chip" onclick="setQuery('cookies en la web')">cookies en la web</span>
+                <span class="badge bg-light text-dark border chip" onclick="setQuery('consentimiento de menores')">consentimiento de menores</span>
+                <span class="badge bg-light text-dark border chip" onclick="setQuery('cesión de datos a delegados de prevención')">cesión de datos a terceros</span>
+            </div>
+            <div id="semantic-status" class="text-muted">⏳ Esperando datos...</div>
+            <div id="semantic-results" class="mt-3"></div>
         </div>
     </div>
 
-    <!-- Librerías JS -->
-    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
-    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
-    <!-- PapaParse: La magia para leer CSVs desde el navegador -->
-    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <!-- 📋 TABLA COMPLETA -->
+    <div class="card">
+        <div class="card-body">
+            <table id="tablaAEPD" class="table table-striped table-hover" style="width:100%">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Expediente</th>
+                        <th>Temática (IA)</th>
+                        <th>Palabras clave</th>
+                        <th>Resumen Ejecutivo</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="tabla-body">
+                    <tr><td colspan="5" class="text-center py-4">⏳ Conectando con la base de datos en GitHub...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
 
-    <script>
-        // URL RAW de tu CSV en GitHub
-        const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"></script>
 
-        Papa.parse(csvUrl, {
-            download: true,
-            header: true,
-            skipEmptyLines: true,
-            complete: function(results) {
-                const tbody = document.getElementById('tabla-body');
-                tbody.innerHTML = ''; // Limpiar mensaje de carga
+<script>
+const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
 
-                let count = 0;
-                results.data.forEach(row => {
-                    if(row.Titulo && row.Titulo !== "") {
-                        count++;
-                        const link = row.Link_PDF ? `<a href="${row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver Original 📄</a>` : '';
-                        
-                        // Embellecer los datos de la IA
-                        let tematica;
-                        if (row.Tematica_IA && row.Tematica_IA !== "Error de procesamiento") {
-                            tematica = `<span class="badge bg-success badge-ai">${row.Tematica_IA}</span>`;
-                        } else {
-                            tematica = '<span class="badge bg-warning text-dark">⏳ Pendiente IA</span>';
-                        }
-                        const resolucion = row.Resolucion_IA || '<em class="text-muted">En cola...</em>';
-                        const resumen = row.Resumen_IA ? row.Resumen_IA.substring(0, 150) + '...' : '<em class="text-muted">En cola...</em>';
-                        
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = `
-                            <td><strong>${row.Titulo}</strong></td>
-                            <td>${tematica}</td>
-                            <td>${resolucion}</td>
-                            <td><small>${resumen}</small></td>
-                            <td>${link}</td>
-                        `;
-                        tbody.appendChild(tr);
-                    }
-                });
+let embedder = null;
+let docVectors = [];
+let engineReady = false;
 
-                // Inicializar DataTables (Añade buscador, paginación y ordenación)
-                $('#tablaAEPD').DataTable({
-                    language: {
-                        url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json',
-                        info: "Mostrando _TOTAL_ resoluciones analizadas"
-                    },
-                    pageLength: 25,
-                    order: [[0, 'desc']]
-                });
-                
-                console.log(`Cargadas ${count} resoluciones.`);
-            },
-            error: function(err) {
-                console.error("Error:", err);
-                document.getElementById('tabla-body').innerHTML = '<tr><td colspan="5" class="text-danger text-center">Error al leer el CSV. Asegúrate de que data/resultados.csv es público.</td></tr>';
+function setStatus(msg){ document.getElementById('semantic-status').innerHTML = msg; }
+function setQuery(q){ document.getElementById('semantic-query').value = q; buscarSimilares(); }
+function dot(a,b){ let s=0; for(let i=0;i<a.length;i++){ s+=a[i]*b[i]; } return s; }
+
+async function embedText(text){
+    const out = await embedder(text, { pooling: 'mean', normalize: true });
+    return out.tolist()[0];
+}
+
+function docText(row){
+    return [row.PalabrasClave_IA, row.Tematica_IA, row.Resumen_IA, row.Hechos_IA, row.Resumen_AEPD, (row.Texto_Completo||'').slice(0,1200)]
+        .filter(t => t && t !== 'Error de procesamiento')
+        .join('. ')
+        .slice(0, 1800);
+}
+
+// Botón "+ ampliar" de los resúmenes (delegado: funciona aunque DataTables redibuje la tabla)
+document.getElementById('tabla-body').addEventListener('click', function(e){
+    if (e.target.classList.contains('toggle-resumen')) {
+        e.preventDefault();
+        const wrap = e.target.closest('small');
+        const short = wrap.querySelector('.r-short');
+        const full = wrap.querySelector('.r-full');
+        const showing = full.classList.contains('d-none');
+        full.classList.toggle('d-none');
+        short.classList.toggle('d-none');
+        e.target.textContent = showing ? '− reducir' : '+ ampliar';
+    }
+});
+
+async function initSemanticEngine(rows){
+    try {
+        setStatus('🧠 Cargando motor semántico multilingüe (la primera vez descarga ~50 MB y queda en caché)...');
+        const { pipeline } = window.transformers;
+        embedder = await pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2', { quantized: true });
+
+        docVectors = [];
+        for (let i=0;i<rows.length;i++){
+            const t = docText(rows[i]);
+            if (!t) continue;
+            const v = await embedText(t);
+            docVectors.push({ row: rows[i], vector: v });
+            if (i % 10 === 0) setStatus(`📐 Vectorizando resolución ${i+1} de ${rows.length}...`);
+        }
+        engineReady = true;
+        setStatus(`✅ Motor semántico listo: ${docVectors.length} resoluciones comprendidas. Escribe tu consulta arriba.`);
+    } catch(e){
+        console.error(e);
+        setStatus('❌ No se pudo cargar el motor semántico: ' + e);
+    }
+}
+
+async function buscarSimilares(){
+    const q = document.getElementById('semantic-query').value.trim();
+    const resEl = document.getElementById('semantic-results');
+    if (!q) return;
+    if (!engineReady){ resEl.innerHTML = '<div class="alert alert-warning">El motor aún se está cargando. Espera unos segundos.</div>'; return; }
+
+    resEl.innerHTML = '<div class="text-muted">⏳ Analizando semánticamente tu consulta...</div>';
+    try {
+        const qv = await embedText(q);
+        const scored = docVectors.map(d => ({ row: d.row, score: dot(qv, d.vector) }));
+        scored.sort((a,b) => b.score - a.score);
+        const top = scored.slice(0, 8).filter(s => s.score > 0.15);
+
+        if (top.length === 0){
+            resEl.innerHTML = '<div class="alert alert-info">No hay casos suficientemente similares. Prueba con otras palabras.</div>';
+            return;
+        }
+
+        let html = '';
+        top.forEach(s => {
+            const pct = Math.max(0, Math.round(s.score * 100));
+            const link = s.row.Link_PDF ? `<a href="${s.row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver resolución 📄</a>` : '';
+            const tem = (s.row.Tematica_IA && s.row.Tematica_IA !== 'Error de procesamiento') ? `<span class="badge bg-success badge-ai">${s.row.Tematica_IA}</span>` : '';
+            const resumen = s.row.Resumen_IA || s.row.Resumen_AEPD || '';
+            const kws = (s.row.PalabrasClave_IA||'').split(/,\s*/).filter(Boolean).slice(0,5)
+                        .map(p => `<span class="badge bg-light text-dark border kw-badge">${p}</span>`).join(' ');
+            html += `
+            <div class="card result-card mb-2">
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <strong>${s.row.Titulo}</strong> ${tem}
+                    </div>
+                    <div class="sim-bar my-2"><div class="sim-fill" style="width:${pct}%"></div></div>
+                    <div class="small text-muted mb-1">Similitud semántica: ${pct}%</div>
+                    <div class="small mb-1">${resumen}</div>
+                    <div class="mb-2">${kws}</div>
+                    <div>${link}</div>
+                </div>
+            </div>`;
+        });
+        resEl.innerHTML = html;
+    } catch(e){
+        console.error(e);
+        resEl.innerHTML = '<div class="alert alert-danger">Error en la búsqueda.</div>';
+    }
+}
+
+document.getElementById('semantic-query').addEventListener('keydown', e => { if (e.key === 'Enter') buscarSimilares(); });
+
+Papa.parse(csvUrl, {
+    download: true,
+    header: true,
+    skipEmptyLines: true,
+    complete: function(results) {
+        const tbody = document.getElementById('tabla-body');
+        tbody.innerHTML = '';
+        const validRows = [];
+
+        results.data.forEach(row => {
+            if(row.Titulo && row.Titulo !== "") {
+                validRows.push(row);
+                const link = row.Link_PDF ? `<a href="${row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver Original 📄</a>` : '';
+
+                let tematica;
+                if (row.Tematica_IA && row.Tematica_IA !== "Error de procesamiento") {
+                    tematica = `<span class="badge bg-success badge-ai">${row.Tematica_IA}</span>`;
+                } else {
+                    tematica = '<span class="badge bg-warning text-dark">⏳ Pendiente IA</span>';
+                }
+
+                // Palabras clave como etiquetas
+                const pcls = (row.PalabrasClave_IA || "").split(/,\s*/).filter(Boolean).slice(0, 6);
+                const kwHtml = pcls.length
+                    ? pcls.map(p => `<span class="badge bg-light text-dark border kw-badge me-1">${p}</span>`).join("")
+                    : '<em class="text-muted">—</em>';
+
+                // Resumen con botón "+ ampliar"
+                const fullResumen = row.Resumen_IA || "";
+                const shortResumen = fullResumen.length > 260 ? fullResumen.substring(0, 260) + "…" : fullResumen;
+                const hasMore = fullResumen.length > 260;
+                const resumenHtml = fullResumen
+                    ? `<small><span class="r-short">${shortResumen}</span><span class="r-full d-none">${fullResumen}</span>${hasMore ? ' <a href="#" class="toggle-resumen">+ ampliar</a>' : ''}</small>`
+                    : '<em class="text-muted"><small>En cola...</small></em>';
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${row.Titulo}</strong></td>
+                    <td>${tematica}</td>
+                    <td>${kwHtml}</td>
+                    <td>${resumenHtml}</td>
+                    <td>${link}</td>
+                `;
+                tbody.appendChild(tr);
             }
         });
-    </script>
+
+        $('#tablaAEPD').DataTable({
+            language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json', info: "Mostrando _TOTAL_ resoluciones" },
+            pageLength: 25,
+            order: [[0, 'desc']]
+        });
+
+        initSemanticEngine(validRows);
+    },
+    error: function(err) {
+        console.error("Error:", err);
+        document.getElementById('tabla-body').innerHTML = '<tr><td colspan="5" class="text-danger text-center">Error al leer el CSV.</td></tr>';
+    }
+});
+</script>
 </body>
 </html>
