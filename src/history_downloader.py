@@ -7,7 +7,7 @@ import pymupdf
 INDEX_FILE = "data/history/index.csv"
 HISTORY_DIR = "data/history"
 FAILS_FILE = "data/history/fallos.csv"
-BATCH_SIZE = 30  # Resoluciones históricas por noche
+BATCH_SIZE = 60  # Resoluciones históricas por noche
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
