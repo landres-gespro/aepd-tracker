@@ -18,14 +18,44 @@
         #semantic-status { font-size: 0.85rem; }
         .kw-badge { font-weight: normal; font-size: 0.75em; }
         .toggle-resumen { font-size: 0.75em; text-decoration: none; }
+        .auth-overlay { position: fixed; inset: 0; background: rgba(244,246,249,.98); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+        .auth-card { max-width: 400px; width: 100%; }
     </style>
 </head>
 <body>
+
+<!-- 🔐 CANDADO DE ACCESO -->
+<div id="auth-overlay" class="auth-overlay">
+    <div class="card auth-card">
+        <div class="card-body p-4">
+            <h4 class="mb-3">🔐 Observatorio AEPD — Acceso privado</h4>
+            <div id="auth-setup-hint" class="alert alert-info d-none small">
+                <strong>Primera configuración:</strong> escribe el usuario y la contraseña que quieras crear, pulsa Entrar y te daremos la línea de código que debes pegar en <code>index.html</code>.
+            </div>
+            <form id="auth-form">
+                <div class="mb-2"><input id="auth-user" class="form-control" placeholder="Usuario" autocomplete="username"></div>
+                <div class="mb-2"><input id="auth-pass" type="password" class="form-control" placeholder="Contraseña" autocomplete="current-password"></div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="auth-remember">
+                    <label class="form-check-label small" for="auth-remember">Recordar en este equipo</label>
+                </div>
+                <button class="btn btn-primary w-100" type="submit">Entrar</button>
+                <div id="auth-error" class="text-danger small mt-2 d-none">Credenciales incorrectas.</div>
+            </form>
+            <div id="auth-setup-out" class="mt-3 d-none">
+                <p class="small mb-1">✅ Generado. Copia esta línea en <code>docs/index.html</code> (sustituye la que pone <code>CONFIGURAR</code>), haz commit y recarga:</p>
+                <textarea id="auth-hash-line" class="form-control form-control-sm" rows="2" readonly></textarea>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="container-fluid">
 
     <div class="header-box">
         <h1>🏛️ Observatorio de Resoluciones AEPD</h1>
-        <p class="lead mb-0">Base de datos jurídica con IA. Búsqueda semántica de casos similares.</p>
+        <p class="lead mb-0">Base de datos jurídica con IA (2016-hoy). Búsqueda semántica de casos similares.</p>
+        <a href="#" id="btn-newpass" class="small text-white-50">🔑 Cambiar credenciales</a>
     </div>
 
     <!-- 🔎 BUSCADOR INTELIGENTE -->
@@ -37,6 +67,24 @@
                 <input type="text" id="semantic-query" class="form-control" placeholder='Ej.: "videovigilancia en baños", "grabación de llamadas telefónicas"...'>
                 <button class="btn btn-primary" type="button" onclick="buscarSimilares()">Buscar casos similares</button>
             </div>
+            <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+                <label class="small text-muted mb-0" for="corpus-select">🗂️ Buscar en:</label>
+                <select id="corpus-select" class="form-select form-select-sm w-auto">
+                    <option value="recientes">Recientes (con análisis IA)</option>
+                    <option value="2016">Histórico 2016</option>
+                    <option value="2017">Histórico 2017</option>
+                    <option value="2018">Histórico 2018</option>
+                    <option value="2019">Histórico 2019</option>
+                    <option value="2020">Histórico 2020</option>
+                    <option value="2021">Histórico 2021</option>
+                    <option value="2022">Histórico 2022</option>
+                    <option value="2023">Histórico 2023</option>
+                    <option value="2024">Histórico 2024</option>
+                    <option value="2025">Histórico 2025</option>
+                    <option value="2026">Histórico 2026</option>
+                </select>
+                <span class="small text-muted">El histórico se rellena solo cada noche.</span>
+            </div>
             <div class="mb-2">
                 <span class="badge bg-light text-dark border chip" onclick="setQuery('videovigilancia en baños')">videovigilancia en baños</span>
                 <span class="badge bg-light text-dark border chip" onclick="setQuery('grabación de llamadas telefónicas')">grabación de llamadas</span>
@@ -44,9 +92,8 @@
                 <span class="badge bg-light text-dark border chip" onclick="setQuery('consentimiento de menores')">consentimiento de menores</span>
                 <span class="badge bg-light text-dark border chip" onclick="setQuery('cesión de datos a delegados de prevención')">cesión de datos a terceros</span>
             </div>
-            <div id="semantic-status" class="text-muted">💤 Motor en reposo. Escribe tu consulta y pulsa Buscar: el motor se cargará solo la primera vez.</div>
+            <div id="semantic-status" class="text-muted">💤 Motor en reposo. Escribe tu consulta y pulsa Buscar.</div>
 
-            <!-- 🌀 Panel de estado vivo -->
             <div id="progress-wrap" class="d-none mt-2">
                 <div class="d-flex align-items-center gap-2">
                     <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
@@ -88,15 +135,69 @@
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <script>
-const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
+// 🔑 PEGA AQUÍ TU HASH GENERADO (sustituye "CONFIGURAR")
+const AUTH_HASH = "CONFIGURAR";
 
-let docVectors = [];
-let engineReady = false;
+const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
+const historyBase = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/history/textos_";
+
 let allRows = [];
+let corpora = {};
+let engineReady = false;
 let worker = null;
 const pending = {};
 let reqCounter = 0;
 
+// ---------- AUTENTICACIÓN ----------
+async function sha256hex(text){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function unlockApp(){
+    const ov = document.getElementById('auth-overlay');
+    if (ov) ov.remove();
+    startApp();
+}
+
+document.getElementById('auth-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const u = document.getElementById('auth-user').value.trim();
+    const p = document.getElementById('auth-pass').value;
+    if (!u || !p) return;
+    const h = await sha256hex(u + ":" + p);
+
+    if (AUTH_HASH === "CONFIGURAR") {
+        document.getElementById('auth-setup-out').classList.remove('d-none');
+        document.getElementById('auth-hash-line').value = 'const AUTH_HASH = "' + h + '";';
+        return;
+    }
+    if (h === AUTH_HASH) {
+        if (document.getElementById('auth-remember').checked) localStorage.setItem('aepd_ok', '1');
+        else sessionStorage.setItem('aepd_ok', '1');
+        unlockApp();
+    } else {
+        document.getElementById('auth-error').classList.remove('d-none');
+    }
+});
+
+document.getElementById('btn-newpass').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const u = prompt("Nuevo usuario:");
+    if (!u) return;
+    const p = prompt("Nueva contraseña:");
+    if (!p) return;
+    const h = await sha256hex(u + ":" + p);
+    prompt("Copia esta línea en docs/index.html (sustituye la de AUTH_HASH) y haz commit:", 'const AUTH_HASH = "' + h + '";');
+});
+
+if (AUTH_HASH === "CONFIGURAR") {
+    document.getElementById('auth-setup-hint').classList.remove('d-none');
+} else if (sessionStorage.getItem('aepd_ok') || localStorage.getItem('aepd_ok')) {
+    unlockApp();
+}
+
+// ---------- APP (solo tras el candado) ----------
 function setStatus(msg){ document.getElementById('semantic-status').innerHTML = msg; }
 function setQuery(q){ document.getElementById('semantic-query').value = q; buscarSimilares(); }
 function dot(a,b){ let s=0; for(let i=0;i<a.length;i++){ s+=a[i]*b[i]; } return s; }
@@ -104,12 +205,10 @@ function dot(a,b){ let s=0; for(let i=0;i<a.length;i++){ s+=a[i]*b[i]; } return 
 function showProgress(label, pct){
     document.getElementById('progress-wrap').classList.remove('d-none');
     document.getElementById('progress-text').innerHTML = label;
-    const bar = document.getElementById('progress-bar');
-    bar.style.width = (pct === null ? '100%' : pct + '%');
+    document.getElementById('progress-bar').style.width = (pct === null ? '100%' : pct + '%');
 }
 function hideProgress(){ document.getElementById('progress-wrap').classList.add('d-none'); }
 
-// --- Comunicación con el worker (IA en segundo plano) ---
 function ensureWorker(){
     if (worker) return worker;
     worker = new Worker('worker.js', { type: 'module' });
@@ -139,8 +238,29 @@ function embedText(text){
     return workerCall({ cmd: 'embed', text, reqId: 'r' + (++reqCounter) });
 }
 
-function docText(row){
-    return [row.PalabrasClave_IA, row.Tematica_IA, row.Resumen_IA, row.Hechos_IA, row.Resumen_AEPD, (row.Texto_Completo||'').slice(0,1200)]
+function normalize(row){
+    if (row.texto !== undefined){
+        return {
+            titulo: row.id,
+            link: row.url_live || row.url_wayback || '',
+            tematica: '',
+            kws: '',
+            resumen: (row.texto || '').slice(0, 300),
+            texto: row.texto || ''
+        };
+    }
+    return {
+        titulo: row.Titulo,
+        link: row.Link_PDF || '',
+        tematica: (row.Tematica_IA && row.Tematica_IA !== 'Error de procesamiento') ? row.Tematica_IA : '',
+        kws: row.PalabrasClave_IA || '',
+        resumen: row.Resumen_IA || row.Resumen_AEPD || '',
+        texto: row.Texto_Completo || ''
+    };
+}
+
+function docText(n){
+    return [n.kws, n.tematica, n.resumen, (n.texto||'').slice(0,1200)]
         .filter(t => t && t !== 'Error de procesamiento')
         .join('. ')
         .slice(0, 1800);
@@ -159,75 +279,93 @@ document.getElementById('tabla-body').addEventListener('click', function(e){
     }
 });
 
-async function initSemanticEngine(rows){
-    try {
-        showProgress('🧠 Cargando motor semántico en segundo plano (primera vez ~50 MB)...', null);
-        setStatus('🧠 Cargando motor en segundo plano. La web sigue totalmente usable mientras tanto.');
-        await workerCall({ cmd: 'init', reqId: 'init' });
-
-        docVectors = [];
-        for (let i=0;i<rows.length;i++){
-            const t = docText(rows[i]);
-            if (!t) continue;
-            const v = await embedText(t);
-            docVectors.push({ row: rows[i], vector: v });
-            const pct = Math.round(((i+1)/rows.length)*100);
-            showProgress(`📐 Comprendiendo resoluciones: ${i+1} de ${rows.length} (${pct}%)`, pct);
-        }
-        engineReady = true;
-        hideProgress();
-        setStatus(`✅ Motor semántico listo: ${docVectors.length} resoluciones comprendidas.`);
-    } catch(e){
-        console.error(e);
-        hideProgress();
-        setStatus('❌ No se pudo cargar el motor semántico: ' + e);
+async function buildCorpus(key){
+    let rows;
+    if (key === 'recientes'){
+        rows = allRows;
+    } else {
+        showProgress(`📥 Descargando corpus del año ${key}...`, null);
+        try {
+            const resp = await fetch(historyBase + key + ".csv");
+            if (!resp.ok) rows = [];
+            else {
+                const parsed = Papa.parse(await resp.text(), { header: true, skipEmptyLines: true });
+                rows = parsed.data.filter(r => r.id && r.texto);
+            }
+        } catch(e){ rows = []; }
     }
+
+    if (!rows || rows.length === 0){
+        hideProgress();
+        throw new Error('Aún no hay textos para ese ámbito. El bot rellena el histórico cada noche.');
+    }
+
+    if (!engineReady){
+        showProgress('🧠 Cargando motor semántico en segundo plano (primera vez ~50 MB)...', null);
+        await workerCall({ cmd: 'init', reqId: 'init' });
+        engineReady = true;
+    }
+
+    const norms = rows.map(normalize);
+    const vectors = [];
+    for (let i=0;i<norms.length;i++){
+        const t = docText(norms[i]);
+        if (!t) continue;
+        const v = await embedText(t);
+        vectors.push({ n: norms[i], vector: v });
+        const pct = Math.round(((i+1)/norms.length)*100);
+        const label = (key === 'recientes') ? 'resoluciones recientes' : `resoluciones de ${key}`;
+        showProgress(`📐 Comprendiendo ${label}: ${i+1} de ${norms.length} (${pct}%)`, pct);
+    }
+    corpora[key] = vectors;
+    hideProgress();
+    return vectors;
 }
 
 async function buscarSimilares(){
     const q = document.getElementById('semantic-query').value.trim();
     const resEl = document.getElementById('semantic-results');
     if (!q) return;
+    const key = document.getElementById('corpus-select').value;
 
-    if (!engineReady){
-        await initSemanticEngine(allRows);
-        if (!engineReady){
-            resEl.innerHTML = '<div class="alert alert-danger">El motor no pudo cargarse en este navegador. La tabla de abajo sigue funcionando con su buscador clásico.</div>';
-            return;
-        }
+    try {
+        if (!corpora[key]) await buildCorpus(key);
+    } catch(e){
+        hideProgress();
+        resEl.innerHTML = `<div class="alert alert-warning">${e.message || e}</div>`;
+        return;
     }
 
     showProgress('🧠 Pensando... convirtiendo tu consulta en significado...', null);
     try {
         const qv = await embedText(q);
         hideProgress();
-        const scored = docVectors.map(d => ({ row: d.row, score: dot(qv, d.vector) }));
+        const scored = corpora[key].map(d => ({ n: d.n, score: dot(qv, d.vector) }));
         scored.sort((a,b) => b.score - a.score);
         const top = scored.slice(0, 8).filter(s => s.score > 0.15);
 
         if (top.length === 0){
-            resEl.innerHTML = '<div class="alert alert-info">No hay casos suficientemente similares. Prueba con otras palabras.</div>';
+            resEl.innerHTML = '<div class="alert alert-info">No hay casos suficientemente similares en ese ámbito. Prueba con otras palabras u otro año.</div>';
             return;
         }
 
         let html = '';
         top.forEach(s => {
             const pct = Math.max(0, Math.round(s.score * 100));
-            const link = s.row.Link_PDF ? `<a href="${s.row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver resolución 📄</a>` : '';
-            const tem = (s.row.Tematica_IA && s.row.Tematica_IA !== 'Error de procesamiento') ? `<span class="badge bg-success badge-ai">${s.row.Tematica_IA}</span>` : '';
-            const resumen = s.row.Resumen_IA || s.row.Resumen_AEPD || '';
-            const kws = (s.row.PalabrasClave_IA||'').split(/,\s*/).filter(Boolean).slice(0,5)
+            const link = s.n.link ? `<a href="${s.n.link}" target="_blank" class="btn btn-sm btn-outline-primary">Ver resolución 📄</a>` : '';
+            const tem = s.n.tematica ? `<span class="badge bg-success badge-ai">${s.n.tematica}</span>` : '<span class="badge bg-secondary badge-ai">Histórico</span>';
+            const kws = (s.n.kws||'').split(/,\s*/).filter(Boolean).slice(0,5)
                         .map(p => `<span class="badge bg-light text-dark border kw-badge">${p}</span>`).join(' ');
             html += `
             <div class="card result-card mb-2">
                 <div class="card-body py-2">
                     <div class="d-flex justify-content-between align-items-center">
-                        <strong>${s.row.Titulo}</strong> ${tem}
+                        <strong>${s.n.titulo}</strong> ${tem}
                     </div>
                     <div class="sim-bar my-2"><div class="sim-fill" style="width:${pct}%"></div></div>
                     <div class="small text-muted mb-1">Similitud semántica: ${pct}%</div>
-                    <div class="small mb-1">${resumen}</div>
-                    <div class="mb-2">${kws}</div>
+                    <div class="small mb-1">${s.n.resumen}</div>
+                    ${kws ? `<div class="mb-2">${kws}</div>` : ''}
                     <div>${link}</div>
                 </div>
             </div>`;
@@ -242,64 +380,66 @@ async function buscarSimilares(){
 
 document.getElementById('semantic-query').addEventListener('keydown', e => { if (e.key === 'Enter') buscarSimilares(); });
 
-Papa.parse(csvUrl, {
-    download: true,
-    header: true,
-    skipEmptyLines: true,
-    complete: function(results) {
-        const tbody = document.getElementById('tabla-body');
-        tbody.innerHTML = '';
-        const validRows = [];
+function startApp(){
+    Papa.parse(csvUrl, {
+        download: true,
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+            const tbody = document.getElementById('tabla-body');
+            tbody.innerHTML = '';
+            const validRows = [];
 
-        results.data.forEach(row => {
-            if(row.Titulo && row.Titulo !== "") {
-                validRows.push(row);
-                const link = row.Link_PDF ? `<a href="${row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver Original 📄</a>` : '';
+            results.data.forEach(row => {
+                if(row.Titulo && row.Titulo !== "") {
+                    validRows.push(row);
+                    const link = row.Link_PDF ? `<a href="${row.Link_PDF}" target="_blank" class="btn btn-sm btn-outline-primary">Ver Original 📄</a>` : '';
 
-                let tematica;
-                if (row.Tematica_IA && row.Tematica_IA !== "Error de procesamiento") {
-                    tematica = `<span class="badge bg-success badge-ai">${row.Tematica_IA}</span>`;
-                } else {
-                    tematica = '<span class="badge bg-warning text-dark">⏳ Pendiente IA</span>';
+                    let tematica;
+                    if (row.Tematica_IA && row.Tematica_IA !== "Error de procesamiento") {
+                        tematica = `<span class="badge bg-success badge-ai">${row.Tematica_IA}</span>`;
+                    } else {
+                        tematica = '<span class="badge bg-warning text-dark">⏳ Pendiente IA</span>';
+                    }
+
+                    const pcls = (row.PalabrasClave_IA || "").split(/,\s*/).filter(Boolean).slice(0, 6);
+                    const kwHtml = pcls.length
+                        ? pcls.map(p => `<span class="badge bg-light text-dark border kw-badge me-1">${p}</span>`).join("")
+                        : '<em class="text-muted">—</em>';
+
+                    const fullResumen = row.Resumen_IA || "";
+                    const shortResumen = fullResumen.length > 260 ? fullResumen.substring(0, 260) + "…" : fullResumen;
+                    const hasMore = fullResumen.length > 260;
+                    const resumenHtml = fullResumen
+                        ? `<small><span class="r-short">${shortResumen}</span><span class="r-full d-none">${fullResumen}</span>${hasMore ? ' <a href="#" class="toggle-resumen">+ ampliar</a>' : ''}</small>`
+                        : '<em class="text-muted"><small>En cola...</small></em>';
+
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td><strong>${row.Titulo}</strong></td>
+                        <td>${tematica}</td>
+                        <td>${kwHtml}</td>
+                        <td>${resumenHtml}</td>
+                        <td>${link}</td>
+                    `;
+                    tbody.appendChild(tr);
                 }
+            });
 
-                const pcls = (row.PalabrasClave_IA || "").split(/,\s*/).filter(Boolean).slice(0, 6);
-                const kwHtml = pcls.length
-                    ? pcls.map(p => `<span class="badge bg-light text-dark border kw-badge me-1">${p}</span>`).join("")
-                    : '<em class="text-muted">—</em>';
+            allRows = validRows;
 
-                const fullResumen = row.Resumen_IA || "";
-                const shortResumen = fullResumen.length > 260 ? fullResumen.substring(0, 260) + "…" : fullResumen;
-                const hasMore = fullResumen.length > 260;
-                const resumenHtml = fullResumen
-                    ? `<small><span class="r-short">${shortResumen}</span><span class="r-full d-none">${fullResumen}</span>${hasMore ? ' <a href="#" class="toggle-resumen">+ ampliar</a>' : ''}</small>`
-                    : '<em class="text-muted"><small>En cola...</small></em>';
-
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><strong>${row.Titulo}</strong></td>
-                    <td>${tematica}</td>
-                    <td>${kwHtml}</td>
-                    <td>${resumenHtml}</td>
-                    <td>${link}</td>
-                `;
-                tbody.appendChild(tr);
-            }
-        });
-
-        allRows = validRows;
-
-        $('#tablaAEPD').DataTable({
-            language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json', info: "Mostrando _TOTAL_ resoluciones" },
-            pageLength: 25,
-            order: [[0, 'desc']]
-        });
-    },
-    error: function(err) {
-        console.error("Error:", err);
-        document.getElementById('tabla-body').innerHTML = '<tr><td colspan="5" class="text-danger text-center">Error al leer el CSV.</td></tr>';
-    }
-});
+            $('#tablaAEPD').DataTable({
+                language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json', info: "Mostrando _TOTAL_ resoluciones" },
+                pageLength: 25,
+                order: [[0, 'desc']]
+            });
+        },
+        error: function(err) {
+            console.error("Error:", err);
+            document.getElementById('tabla-body').innerHTML = '<tr><td colspan="5" class="text-danger text-center">Error al leer el CSV.</td></tr>';
+        }
+    });
+}
 </script>
 </body>
 </html>
