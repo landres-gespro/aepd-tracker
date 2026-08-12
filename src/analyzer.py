@@ -7,37 +7,37 @@ import json
 from pydantic import BaseModel, Field, ValidationError
 
 CSV_FILE = "data/resultados.csv"
-# Procesaremos 15 resoluciones por ejecución para no reventar el límite diario de Groq
 BATCH_SIZE = 25 
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 class AnalisisResolucion(BaseModel):
-    tematica: str = Field(description="Categoría principal (ej. Videovigilancia, RRHH, RGPD, Derechos ARSO)")
-    resumen_ejecutivo: str = Field(description="Resumen del caso en 2-3 líneas.")
+    tematica: str = Field(description="Categoría principal (ej. Videovigilancia, RRHH, RGPD)")
+    resumen_ejecutivo: str = Field(description="Resumen DETALLADO de 4-6 frases: quién reclamó, qué ocurrió, qué analizó la AEPD y qué se concluyó.")
     hechos_principales: list[str] = Field(description="Lista de 3 a 5 puntos clave.")
     resolucion_final: str = Field(description="Conclusión: Sanción (y cuantía), Archivo, Apercibimiento.")
     normativas_infringidas: list[str] = Field(description="Artículos infringidos.")
+    palabras_clave: list[str] = Field(description="5-8 palabras o conceptos cortos que definan el caso (ej. 'videovigilancia', 'baños', 'consentimiento').")
 
 def analyze_text(texto):
     if not texto or "Error" in str(texto):
         return None
         
-    texto_input = str(texto)[:4000]
+    texto_input = str(texto)[:6000]
     
-    # 🎯 PROMPT BLINDADO: Le damos un ejemplo exacto (Few-Shot) para que no improvise claves
     prompt = f"""Eres un asistente legal experto en la AEPD. Analiza el texto y extrae la información.
-DEBES devolver EXCLUSIVAMENTE un objeto JSON con EXACTAMENTE estas 5 claves:
-"tematica", "resumen_ejecutivo", "hechos_principales", "resolucion_final", "normativas_infringidas".
+DEBES devolver EXCLUSIVAMENTE un objeto JSON con EXACTAMENTE estas 6 claves:
+"tematica", "resumen_ejecutivo", "hechos_principales", "resolucion_final", "normativas_infringidas", "palabras_clave".
 Si no encuentras información para una clave, usa el string "No especificado" o una lista vacía [].
 
 EJEMPLO DE RESPUESTA OBLIGATORIA:
 {{
   "tematica": "Videovigilancia",
-  "resumen_ejecutivo": "Una comunidad de vecinos instaló cámaras que grababan la vía pública sin autorización.",
+  "resumen_ejecutivo": "Una comunidad de vecinos instaló cámaras que grababan la vía pública sin autorización. Un vecino denunció la grabación de zonas comunes y accesos. La AEPD analizó la proporcionalidad de la medida y la ausencia de carteles informativos. Se concluyó que el tratamiento carecía de base jurídica válida y resultaba desproporcionado.",
   "hechos_principales": ["Instalación de cámaras sin aviso", "Grabación de la calle", "Denuncia de un vecino"],
   "resolucion_final": "Sanción de 3.000 euros",
-  "normativas_infringidas": ["Art. 5 RGPD", "Art. 6 RGPD"]
+  "normativas_infringidas": ["Art. 5 RGPD", "Art. 6 RGPD"],
+  "palabras_clave": ["videovigilancia", "cámaras", "comunidad de vecinos", "vía pública", "carteles informativos", "sanción"]
 }}
 
 TEXTO A ANALIZAR:
@@ -52,12 +52,11 @@ TEXTO A ANALIZAR:
             ],
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"},
-            temperature=0.1 # Temperatura baja para respuestas más estrictas y estructuradas
+            temperature=0.1
         )
         
         response_json = chat_completion.choices[0].message.content
         
-        # A veces la IA añade ```json al principio. Lo limpiamos por si acaso.
         if response_json.startswith("```json"):
             response_json = response_json[7:-3].strip()
             
@@ -65,12 +64,12 @@ TEXTO A ANALIZAR:
         valid_data = AnalisisResolucion(**data)
         return valid_data.model_dump()
         
-    except ValidationError as ve:
+    except ValidationError:
         print(f"   ⚠️ Error de formato: La IA intentó inventarse claves nuevas.")
         return None
     except Exception as e:
         if "429" in str(e):
-            print("   🛑 LÍMITE DIARIO DE GROQ ALCANZADO (Rate Limit). Deteniendo el lote de hoy.")
+            print("   🛑 LÍMITE DIARIO DE GROQ ALCANZADO. Deteniendo el lote de hoy.")
             return "RATE_LIMIT"
         print(f"   ❌ Error inesperado: {e}")
         return None
@@ -83,16 +82,15 @@ def main():
     print("🤖 Cargando base de datos...")
     df = pd.read_csv(CSV_FILE)
     
-    new_cols = ['Tematica_IA', 'Resumen_IA', 'Hechos_IA', 'Resolucion_IA', 'Normativa_IA']
+    new_cols = ['Tematica_IA', 'Resumen_IA', 'Hechos_IA', 'Resolucion_IA', 'Normativa_IA', 'PalabrasClave_IA']
     for col in new_cols:
         if col not in df.columns:
             df[col] = ""
         else:
-            # Forzamos tipo TEXTO: convierte los huecos (NaN) en "" y evita el error float64
             df[col] = df[col].fillna("").astype(str)
             
-    # Buscamos filas vacías o con error previo
-    mask = (df['Tematica_IA'] == "") | (df['Tematica_IA'] == "Error de procesamiento")
+    # Pendientes = vacías, con error previo, o SIN palabras clave (re-análisis con esquema nuevo)
+    mask = (df['Tematica_IA'] == "") | (df['Tematica_IA'] == "Error de procesamiento") | (df['PalabrasClave_IA'] == "")
     rows_to_process = df[mask]
     
     total_pending = len(rows_to_process)
@@ -102,9 +100,8 @@ def main():
         print("✅ Todo está analizado.")
         return
 
-    # Limitamos el procesamiento al BATCH_SIZE
     limit = min(BATCH_SIZE, total_pending)
-    print(f"🚀 Procesando lote de {limit} resoluciones (para no saturar la API de Groq)...")
+    print(f"🚀 Procesando lote de {limit} resoluciones...")
     
     processed_count = 0
     
@@ -124,20 +121,20 @@ def main():
             df.loc[index, 'Hechos_IA'] = " | ".join(analisis['hechos_principales'])
             df.loc[index, 'Resolucion_IA'] = analisis['resolucion_final']
             df.loc[index, 'Normativa_IA'] = ", ".join(analisis['normativas_infringidas'])
-            print(f"   ✅ Éxito: '{analisis['tematica']}'")
+            df.loc[index, 'PalabrasClave_IA'] = ", ".join(analisis['palabras_clave'])
+            print(f"   ✅ Éxito: '{analisis['tematica']}' | {len(analisis['palabras_clave'])} palabras clave")
             processed_count += 1
         else:
             df.loc[index, 'Tematica_IA'] = "Error de procesamiento"
             processed_count += 1
             
-        # Pausa de cortesía para evitar bloqueos por peticiones por minuto (RPM)
         time.sleep(2) 
             
     print(f"💾 Guardando {processed_count} nuevos análisis en el CSV...")
     df.to_csv(CSV_FILE, index=False, encoding='utf-8')
     
     remaining = total_pending - processed_count
-    print(f"✅ Lote completado. Quedan {remaining} resoluciones pendientes para futuras ejecuciones.")
+    print(f"✅ Lote completado. Quedan {remaining} pendientes.")
 
 if __name__ == "__main__":
     main()
