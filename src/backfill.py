@@ -79,7 +79,8 @@ def main():
         year = int(m.group(1)) if m else 0
         if year and (year < 2016 or year > 2100):
             continue  # Solo nos interesa 2016 en adelante
-        key = original.lower()
+        # Deduplicamos por NOMBRE de archivo (ID de resolución), no por URL completa
+        key = original.rstrip("/").split("/")[-1].lower()
         if key not in seen or timestamp > seen[key][0]:
             seen[key] = (timestamp, original, year)
 
