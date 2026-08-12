@@ -45,6 +45,18 @@
                 <span class="badge bg-light text-dark border chip" onclick="setQuery('cesión de datos a delegados de prevención')">cesión de datos a terceros</span>
             </div>
             <div id="semantic-status" class="text-muted">💤 Motor en reposo. Escribe tu consulta y pulsa Buscar: el motor se cargará solo la primera vez.</div>
+
+            <!-- 🌀 Panel de estado vivo -->
+            <div id="progress-wrap" class="d-none mt-2">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                    <span id="progress-text" class="small text-muted">Preparando...</span>
+                </div>
+                <div class="progress mt-1" style="height: 6px;">
+                    <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" style="width: 0%"></div>
+                </div>
+            </div>
+
             <div id="semantic-results" class="mt-3"></div>
         </div>
     </div>
@@ -78,23 +90,53 @@
 <script>
 const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
 
-let embedder = null;
 let docVectors = [];
 let engineReady = false;
 let allRows = [];
+let worker = null;
+const pending = {};
+let reqCounter = 0;
 
 function setStatus(msg){ document.getElementById('semantic-status').innerHTML = msg; }
 function setQuery(q){ document.getElementById('semantic-query').value = q; buscarSimilares(); }
 function dot(a,b){ let s=0; for(let i=0;i<a.length;i++){ s+=a[i]*b[i]; } return s; }
 
-async function loadTransformers(){
-    if (window.transformers && window.transformers.pipeline) return window.transformers;
-    return await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/+esm');
+function showProgress(label, pct){
+    document.getElementById('progress-wrap').classList.remove('d-none');
+    document.getElementById('progress-text').innerHTML = label;
+    const bar = document.getElementById('progress-bar');
+    bar.style.width = (pct === null ? '100%' : pct + '%');
+}
+function hideProgress(){ document.getElementById('progress-wrap').classList.add('d-none'); }
+
+// --- Comunicación con el worker (IA en segundo plano) ---
+function ensureWorker(){
+    if (worker) return worker;
+    worker = new Worker('worker.js', { type: 'module' });
+    worker.onmessage = (e) => {
+        const d = e.data || {};
+        const p = pending[d.reqId];
+        if (!p) return;
+        delete pending[d.reqId];
+        if (d.evt === 'error') p.reject(new Error(d.msg || 'error'));
+        else if (d.evt === 'ready') p.resolve();
+        else if (d.evt === 'vector') p.resolve(d.vector);
+    };
+    worker.onerror = (e) => {
+        for (const k in pending) { pending[k].reject(new Error('Worker: ' + e.message)); delete pending[k]; }
+    };
+    return worker;
 }
 
-async function embedText(text){
-    const out = await embedder(text, { pooling: 'mean', normalize: true });
-    return out.tolist()[0];
+function workerCall(payload){
+    return new Promise((resolve, reject) => {
+        pending[payload.reqId] = { resolve, reject };
+        ensureWorker().postMessage(payload);
+    });
+}
+
+function embedText(text){
+    return workerCall({ cmd: 'embed', text, reqId: 'r' + (++reqCounter) });
 }
 
 function docText(row){
@@ -119,19 +161,9 @@ document.getElementById('tabla-body').addEventListener('click', function(e){
 
 async function initSemanticEngine(rows){
     try {
-        setStatus('🧠 Cargando motor semántico (primera vez ~50 MB, queda en caché)...');
-        const resEl = document.getElementById('semantic-results');
-        resEl.innerHTML = '<div class="text-muted">🧠 Cargando motor semántico por primera vez...</div>';
-
-        const T = await loadTransformers();
-        // Modo 1 hilo: más estable y con menos consumo de memoria
-        try {
-            if (T.env && T.env.backends && T.env.backends.onnx && T.env.backends.onnx.wasm) {
-                T.env.backends.onnx.wasm.numThreads = 1;
-            }
-        } catch(e){}
-
-        embedder = await T.pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2', { quantized: true });
+        showProgress('🧠 Cargando motor semántico en segundo plano (primera vez ~50 MB)...', null);
+        setStatus('🧠 Cargando motor en segundo plano. La web sigue totalmente usable mientras tanto.');
+        await workerCall({ cmd: 'init', reqId: 'init' });
 
         docVectors = [];
         for (let i=0;i<rows.length;i++){
@@ -139,12 +171,15 @@ async function initSemanticEngine(rows){
             if (!t) continue;
             const v = await embedText(t);
             docVectors.push({ row: rows[i], vector: v });
-            if (i % 10 === 0) setStatus(`📐 Vectorizando resolución ${i+1} de ${rows.length}...`);
+            const pct = Math.round(((i+1)/rows.length)*100);
+            showProgress(`📐 Comprendiendo resoluciones: ${i+1} de ${rows.length} (${pct}%)`, pct);
         }
         engineReady = true;
+        hideProgress();
         setStatus(`✅ Motor semántico listo: ${docVectors.length} resoluciones comprendidas.`);
     } catch(e){
         console.error(e);
+        hideProgress();
         setStatus('❌ No se pudo cargar el motor semántico: ' + e);
     }
 }
@@ -154,7 +189,6 @@ async function buscarSimilares(){
     const resEl = document.getElementById('semantic-results');
     if (!q) return;
 
-    // Carga perezosa: el motor solo arranca cuando el usuario busca
     if (!engineReady){
         await initSemanticEngine(allRows);
         if (!engineReady){
@@ -163,9 +197,10 @@ async function buscarSimilares(){
         }
     }
 
-    resEl.innerHTML = '<div class="text-muted">⏳ Analizando semánticamente tu consulta...</div>';
+    showProgress('🧠 Pensando... convirtiendo tu consulta en significado...', null);
     try {
         const qv = await embedText(q);
+        hideProgress();
         const scored = docVectors.map(d => ({ row: d.row, score: dot(qv, d.vector) }));
         scored.sort((a,b) => b.score - a.score);
         const top = scored.slice(0, 8).filter(s => s.score > 0.15);
@@ -200,6 +235,7 @@ async function buscarSimilares(){
         resEl.innerHTML = html;
     } catch(e){
         console.error(e);
+        hideProgress();
         resEl.innerHTML = '<div class="alert alert-danger">Error en la búsqueda.</div>';
     }
 }
@@ -258,7 +294,6 @@ Papa.parse(csvUrl, {
             pageLength: 25,
             order: [[0, 'desc']]
         });
-        // NOTA: el motor semántico ya NO se carga aquí. Solo al pulsar Buscar.
     },
     error: function(err) {
         console.error("Error:", err);
