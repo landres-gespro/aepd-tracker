@@ -44,7 +44,7 @@
                 <span class="badge bg-light text-dark border chip" onclick="setQuery('consentimiento de menores')">consentimiento de menores</span>
                 <span class="badge bg-light text-dark border chip" onclick="setQuery('cesión de datos a delegados de prevención')">cesión de datos a terceros</span>
             </div>
-            <div id="semantic-status" class="text-muted">⏳ Esperando datos...</div>
+            <div id="semantic-status" class="text-muted">💤 Motor en reposo. Escribe tu consulta y pulsa Buscar: el motor se cargará solo la primera vez.</div>
             <div id="semantic-results" class="mt-3"></div>
         </div>
     </div>
@@ -81,12 +81,12 @@ const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/ma
 let embedder = null;
 let docVectors = [];
 let engineReady = false;
+let allRows = [];
 
 function setStatus(msg){ document.getElementById('semantic-status').innerHTML = msg; }
 function setQuery(q){ document.getElementById('semantic-query').value = q; buscarSimilares(); }
 function dot(a,b){ let s=0; for(let i=0;i<a.length;i++){ s+=a[i]*b[i]; } return s; }
 
-// Cargador universal de la librería de IA (import dinámico, a prueba de fallos)
 async function loadTransformers(){
     if (window.transformers && window.transformers.pipeline) return window.transformers;
     return await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/+esm');
@@ -104,7 +104,6 @@ function docText(row){
         .slice(0, 1800);
 }
 
-// Botón "+ ampliar" de los resúmenes
 document.getElementById('tabla-body').addEventListener('click', function(e){
     if (e.target.classList.contains('toggle-resumen')) {
         e.preventDefault();
@@ -120,9 +119,19 @@ document.getElementById('tabla-body').addEventListener('click', function(e){
 
 async function initSemanticEngine(rows){
     try {
-        setStatus('🧠 Cargando motor semántico multilingüe (la primera vez descarga ~50 MB y queda en caché)...');
-        const pipeline = (await loadTransformers()).pipeline;
-        embedder = await pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2', { quantized: true });
+        setStatus('🧠 Cargando motor semántico (primera vez ~50 MB, queda en caché)...');
+        const resEl = document.getElementById('semantic-results');
+        resEl.innerHTML = '<div class="text-muted">🧠 Cargando motor semántico por primera vez...</div>';
+
+        const T = await loadTransformers();
+        // Modo 1 hilo: más estable y con menos consumo de memoria
+        try {
+            if (T.env && T.env.backends && T.env.backends.onnx && T.env.backends.onnx.wasm) {
+                T.env.backends.onnx.wasm.numThreads = 1;
+            }
+        } catch(e){}
+
+        embedder = await T.pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2', { quantized: true });
 
         docVectors = [];
         for (let i=0;i<rows.length;i++){
@@ -133,7 +142,7 @@ async function initSemanticEngine(rows){
             if (i % 10 === 0) setStatus(`📐 Vectorizando resolución ${i+1} de ${rows.length}...`);
         }
         engineReady = true;
-        setStatus(`✅ Motor semántico listo: ${docVectors.length} resoluciones comprendidas. Escribe tu consulta arriba.`);
+        setStatus(`✅ Motor semántico listo: ${docVectors.length} resoluciones comprendidas.`);
     } catch(e){
         console.error(e);
         setStatus('❌ No se pudo cargar el motor semántico: ' + e);
@@ -144,7 +153,15 @@ async function buscarSimilares(){
     const q = document.getElementById('semantic-query').value.trim();
     const resEl = document.getElementById('semantic-results');
     if (!q) return;
-    if (!engineReady){ resEl.innerHTML = '<div class="alert alert-warning">El motor aún se está cargando. Espera unos segundos.</div>'; return; }
+
+    // Carga perezosa: el motor solo arranca cuando el usuario busca
+    if (!engineReady){
+        await initSemanticEngine(allRows);
+        if (!engineReady){
+            resEl.innerHTML = '<div class="alert alert-danger">El motor no pudo cargarse en este navegador. La tabla de abajo sigue funcionando con su buscador clásico.</div>';
+            return;
+        }
+    }
 
     resEl.innerHTML = '<div class="text-muted">⏳ Analizando semánticamente tu consulta...</div>';
     try {
@@ -234,13 +251,14 @@ Papa.parse(csvUrl, {
             }
         });
 
+        allRows = validRows;
+
         $('#tablaAEPD').DataTable({
             language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json', info: "Mostrando _TOTAL_ resoluciones" },
             pageLength: 25,
             order: [[0, 'desc']]
         });
-
-        initSemanticEngine(validRows);
+        // NOTA: el motor semántico ya NO se carga aquí. Solo al pulsar Buscar.
     },
     error: function(err) {
         console.error("Error:", err);
