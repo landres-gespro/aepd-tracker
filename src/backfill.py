@@ -8,41 +8,66 @@ from collections import Counter
 CDX_URL = "https://web.archive.org/cdx/search/cdx"
 INDEX_FILE = "data/history/index.csv"
 
+def cdx_query(params):
+    try:
+        r = requests.get(CDX_URL, params=params, timeout=600)
+        r.raise_for_status()
+        rows = r.json()
+        if rows and rows[0] == ["original", "timestamp"]:
+            rows = rows[1:]
+        return rows
+    except Exception as e:
+        print(f"⚠️ Consulta fallida: {e}")
+        return []
+
 def main():
-    # Si el censo ya existe, no lo volvemos a descargar (ahorra tiempo cada noche)
+    # Si el censo ya existe Y tiene datos, no lo volvemos a descargar
     if os.path.exists(INDEX_FILE):
         with open(INDEX_FILE, encoding="utf-8") as f:
             n = sum(1 for _ in f) - 1
-        print(f"📚 El censo histórico ya existe ({n} resoluciones). Saltando descarga.")
-        return
+        if n > 0:
+            print(f"📚 El censo histórico ya existe ({n} resoluciones). Saltando descarga.")
+            return
+        else:
+            print("📚 El censo existe pero está vacío. Volviendo a consultar...")
 
     print("🌍 Consultando el archivo histórico de Wayback Machine (gratis)...")
-    params = {
-        "url": "aepd.es/documento/*.pdf",
+
+    base = {
         "output": "json",
         "fl": "original,timestamp",
         "collapse": "urlkey",
         "filter": "statuscode:200",
     }
 
-    rows = None
-    for intento in range(2):  # Un reintento por si archive.org está perezoso
-        try:
-            r = requests.get(CDX_URL, params=params, timeout=600)
-            r.raise_for_status()
-            rows = r.json()
-            break
-        except Exception as e:
-            print(f"⚠️ Intento {intento+1} falló: {e}. Esperando 10s...")
-            time.sleep(10)
+    rows = []
+    # Intentos 1 y 2: con y sin www (Wayback los indexa por separado)
+    for host in ["www.aepd.es/documento/*.pdf", "aepd.es/documento/*.pdf"]:
+        p = dict(base)
+        p["url"] = host
+        got = cdx_query(p)
+        print(f"🔎 Consulta '{host}': {len(got)} URLs.")
+        rows += got
+        time.sleep(2)
 
-    if rows is None:
-        print("❌ No se pudo consultar Wayback Machine.")
+    # Intento 3 (respaldo): todo el dominio, filtrando por /documento/*.pdf
+    if not rows:
+        p = dict(base)
+        p["url"] = "aepd.es"
+        p["matchType"] = "domain"
+        p["filter"] = r"original:.*documento.*\.pdf"
+        got = cdx_query(p)
+        print(f"🔎 Consulta de dominio completo: {len(got)} URLs.")
+        rows += got
+
+    if not rows:
+        print("❌ Wayback no devolvió nada con ningún método. Lo revisaremos juntos.")
         return
 
-    if rows and rows[0] == ["original", "timestamp"]:
-        rows = rows[1:]
-    print(f"🔎 Wayback conoce {len(rows)} URLs únicas de documentos AEPD.")
+    print(f"🔎 Total bruto: {len(rows)} capturas únicas.")
+    print("📋 Primeras 3 URLs de muestra:")
+    for r0 in rows[:3]:
+        print("   ", r0)
 
     # Deduplicar y extraer el año del nombre del archivo (ej. ps-00415-2024.pdf)
     seen = {}
