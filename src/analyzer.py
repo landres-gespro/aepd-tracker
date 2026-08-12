@@ -87,6 +87,9 @@ def main():
     for col in new_cols:
         if col not in df.columns:
             df[col] = ""
+        else:
+            # Forzamos tipo TEXTO: convierte los huecos (NaN) en "" y evita el error float64
+            df[col] = df[col].fillna("").astype(str)
             
     # Buscamos filas vacías o con error previo
     mask = (df['Tematica_IA'] == "") | (df['Tematica_IA'] == "Error de procesamiento")
