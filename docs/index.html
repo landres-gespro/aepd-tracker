@@ -43,7 +43,7 @@
                 <div id="auth-error" class="text-danger small mt-2 d-none">Credenciales incorrectas.</div>
             </form>
             <div id="auth-setup-out" class="mt-3 d-none">
-                <p class="small mb-1">✅ Generado. Copia esta línea en <code>docs/index.html</code> (sustituye la que pone <code>CONFIGURAR</code>), haz commit y recarga:</p>
+                <p class="small mb-1">✅ Generado. Copia esta línea <strong>dentro de las llaves de <code>AUTH_USERS</code></strong> en <code>docs/index.html</code>, haz commit y recarga:</p>
                 <textarea id="auth-hash-line" class="form-control form-control-sm" rows="2" readonly></textarea>
             </div>
         </div>
@@ -55,7 +55,10 @@
     <div class="header-box">
         <h1>🏛️ Observatorio de Resoluciones AEPD</h1>
         <p class="lead mb-0">Base de datos jurídica con IA (2016-hoy). Búsqueda semántica de casos similares.</p>
-        <a href="#" id="btn-newpass" class="small text-white-50">🔑 Cambiar credenciales</a>
+        <div class="small mt-2">
+            <a href="#" id="btn-adduser" class="text-white-50 me-3">➕ Añadir usuario</a>
+            <a href="#" id="btn-newpass" class="text-white-50">🔑 Cambiar contraseña</a>
+        </div>
     </div>
 
     <!-- 🔎 BUSCADOR INTELIGENTE -->
@@ -135,8 +138,12 @@
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <script>
-// 🔑 PEGA AQUÍ TU HASH GENERADO (sustituye "CONFIGURAR")
-const AUTH_HASH = "897cde46bb296fe9a6e39f2b540fbc4f72a2e4e38be1ce05d59b49987d977f6d";
+// 🔐 USUARIOS AUTORIZADOS (una línea por persona)
+// El hash se genera desde la propia web (enlaces ➕ / 🔑 de la cabecera).
+// Las contraseñas NUNCA se guardan en claro, solo su huella SHA-256.
+const AUTH_USERS = {
+    // "nombre": "hash_generado",
+};
 
 const csvUrl = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/resultados.csv";
 const historyBase = "https://raw.githubusercontent.com/landres-gespro/aepd-tracker/main/data/history/textos_";
@@ -148,13 +155,15 @@ let worker = null;
 const pending = {};
 let reqCounter = 0;
 
-// ---------- AUTENTICACIÓN ----------
+// ---------- AUTENTICACIÓN MULTIUSUARIO ----------
 async function sha256hex(text){
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function unlockApp(){
+const modoConfig = Object.keys(AUTH_USERS).length === 0;
+
+function unlockApp(user){
     const ov = document.getElementById('auth-overlay');
     if (ov) ov.remove();
     startApp();
@@ -167,35 +176,49 @@ document.getElementById('auth-form').addEventListener('submit', async (e) => {
     if (!u || !p) return;
     const h = await sha256hex(u + ":" + p);
 
-    if (AUTH_HASH === "CONFIGURAR") {
+    if (modoConfig) {
+        // Primera configuración: generamos la línea del primer usuario
         document.getElementById('auth-setup-out').classList.remove('d-none');
-        document.getElementById('auth-hash-line').value = 'const AUTH_HASH = "' + h + '";';
+        document.getElementById('auth-hash-line').value = '    "' + u + '": "' + h + '",';
         return;
     }
-    if (h === AUTH_HASH) {
-        if (document.getElementById('auth-remember').checked) localStorage.setItem('aepd_ok', '1');
-        else sessionStorage.setItem('aepd_ok', '1');
-        unlockApp();
+    if (AUTH_USERS[u] && AUTH_USERS[u] === h) {
+        if (document.getElementById('auth-remember').checked) localStorage.setItem('aepd_ok', u);
+        else sessionStorage.setItem('aepd_ok', u);
+        unlockApp(u);
     } else {
         document.getElementById('auth-error').classList.remove('d-none');
     }
 });
 
-document.getElementById('btn-newpass').addEventListener('click', async (e) => {
+// Sesión guardada de otras veces
+const sesionGuardada = sessionStorage.getItem('aepd_ok') || localStorage.getItem('aepd_ok');
+if (!modoConfig && sesionGuardada && AUTH_USERS[sesionGuardada]) {
+    unlockApp(sesionGuardada);
+} else if (modoConfig) {
+    document.getElementById('auth-setup-hint').classList.remove('d-none');
+}
+
+// ---------- Gestión de accesos (administrador) ----------
+document.getElementById('btn-adduser').addEventListener('click', async (e) => {
     e.preventDefault();
-    const u = prompt("Nuevo usuario:");
+    const u = prompt("Nombre del nuevo usuario (ej. maria):");
     if (!u) return;
-    const p = prompt("Nueva contraseña:");
+    const p = prompt("Contraseña para '" + u + "':");
     if (!p) return;
     const h = await sha256hex(u + ":" + p);
-    prompt("Copia esta línea en docs/index.html (sustituye la de AUTH_HASH) y haz commit:", 'const AUTH_HASH = "' + h + '";');
+    prompt("Copia esta línea y AÑÁDELA dentro de las llaves de AUTH_USERS en docs/index.html. Luego haz commit:", '    "' + u + '": "' + h + '",');
 });
 
-if (AUTH_HASH === "CONFIGURAR") {
-    document.getElementById('auth-setup-hint').classList.remove('d-none');
-} else if (sessionStorage.getItem('aepd_ok') || localStorage.getItem('aepd_ok')) {
-    unlockApp();
-}
+document.getElementById('btn-newpass').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const u = prompt("¿De qué usuario quieres cambiar la contraseña?", sesionGuardada || "");
+    if (!u) return;
+    const p = prompt("Nueva contraseña para '" + u + "':");
+    if (!p) return;
+    const h = await sha256hex(u + ":" + p);
+    prompt("Copia esta línea y SUSTITUYE la línea actual de '" + u + "' dentro de AUTH_USERS. Luego haz commit:", '    "' + u + '": "' + h + '",');
+});
 
 // ---------- APP (solo tras el candado) ----------
 function setStatus(msg){ document.getElementById('semantic-status').innerHTML = msg; }
