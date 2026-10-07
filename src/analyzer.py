@@ -7,7 +7,14 @@ import json
 from pydantic import BaseModel, Field, ValidationError
 
 CSV_FILE = "data/resultados.csv"
-BATCH_SIZE = 25 
+BATCH_SIZE = 25
+
+# Modelos de respaldo: si Groq jubila uno, salta solo al siguiente
+MODELOS = [
+    "openai/gpt-oss-120b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "llama-3.1-8b-instant",
+]
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
@@ -22,10 +29,16 @@ class AnalisisResolucion(BaseModel):
 def analyze_text(texto):
     if not texto or "Error" in str(texto):
         return None
-        
+
     texto_input = str(texto)[:6000]
-    
-    prompt = f"""Eres un asistente legal experto en la AEPD. Analiza el texto y extrae la información.
+
+    prompt = f"""Eres un asistente legal experto en dictámenes del Gabinete Jurídico de la AEPD.
+El texto que recibirás es una CONSULTA jurídica (no una sanción): alguien pregunta y el Gabinete responde.
+DEBES devolver EXCLUSIVAMENTE un objeto JSON con EXACTAMENTE estas 6 claves:
+"tematica", "resumen_ejecutivo", "hechos_principales", "resolucion_final", "normativas_infringidas", "palabras_clave".
+Si no encuentras información para una clave, usa el string "No especificado" o una lista vacía [].
+
+prompt = f"""Eres un asistente legal experto en la AEPD. Analiza el texto y extrae la información.
 DEBES devolver EXCLUSIVAMENTE un objeto JSON con EXACTAMENTE estas 6 claves:
 "tematica", "resumen_ejecutivo", "hechos_principales", "resolucion_final", "normativas_infringidas", "palabras_clave".
 Si no encuentras información para una clave, usa el string "No especificado" o una lista vacía [].
@@ -43,36 +56,37 @@ EJEMPLO DE RESPUESTA OBLIGATORIA:
 TEXTO A ANALIZAR:
 {texto_input}
 """
-    
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "Eres un asistente legal. Devuelve SOLO un JSON válido, sin texto adicional, sin markdown, sin explicaciones."},
-                {"role": "user", "content": prompt}
-            ],
-            model="llama-3.3-70b-versatile",
-            response_format={"type": "json_object"},
-            temperature=0.1
-        )
-        
-        response_json = chat_completion.choices[0].message.content
-        
-        if response_json.startswith("```json"):
-            response_json = response_json[7:-3].strip()
-            
-        data = json.loads(response_json)
-        valid_data = AnalisisResolucion(**data)
-        return valid_data.model_dump()
-        
-    except ValidationError:
-        print(f"   ⚠️ Error de formato: La IA intentó inventarse claves nuevas.")
-        return None
-    except Exception as e:
-        if "429" in str(e):
-            print("   🛑 LÍMITE DIARIO DE GROQ ALCANZADO. Deteniendo el lote de hoy.")
-            return "RATE_LIMIT"
-        print(f"   ❌ Error inesperado: {e}")
-        return None
+
+    for modelo in MODELOS:
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "Eres un asistente legal. Devuelve SOLO un JSON válido, sin texto adicional, sin markdown, sin explicaciones."},
+                    {"role": "user", "content": prompt}
+                ],
+                model=modelo,
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+
+            response_json = chat_completion.choices[0].message.content
+
+            if response_json.startswith("```json"):
+                response_json = response_json[7:-3].strip()
+
+            data = json.loads(response_json)
+            valid_data = AnalisisResolucion(**data)
+            return valid_data.model_dump()
+
+        except Exception as e:
+            if "429" in str(e):
+                print("   🛑 LÍMITE DIARIO DE GROQ ALCANZADO. Deteniendo el lote de hoy.")
+                return "RATE_LIMIT"
+            print(f"   ⚠️ Modelo {modelo} no disponible, probando el siguiente...")
+            continue
+
+    print("   ❌ Todos los modelos fallaron.")
+    return None
 
 def main():
     if not os.path.exists(CSV_FILE):
@@ -81,40 +95,39 @@ def main():
 
     print("🤖 Cargando base de datos...")
     df = pd.read_csv(CSV_FILE)
-    
+
     new_cols = ['Tematica_IA', 'Resumen_IA', 'Hechos_IA', 'Resolucion_IA', 'Normativa_IA', 'PalabrasClave_IA']
     for col in new_cols:
         if col not in df.columns:
             df[col] = ""
         else:
             df[col] = df[col].fillna("").astype(str)
-            
-    # Pendientes = vacías, con error previo, o SIN palabras clave (re-análisis con esquema nuevo)
+
     mask = (df['Tematica_IA'] == "") | (df['Tematica_IA'] == "Error de procesamiento") | (df['PalabrasClave_IA'] == "")
     rows_to_process = df[mask]
-    
+
     total_pending = len(rows_to_process)
-    print(f"📊 Total de resoluciones pendientes: {total_pending}")
-    
+    print(f"📊 Total de informes pendientes: {total_pending}")
+
     if total_pending == 0:
         print("✅ Todo está analizado.")
         return
 
     limit = min(BATCH_SIZE, total_pending)
-    print(f"🚀 Procesando lote de {limit} resoluciones...")
-    
+    print(f"🚀 Procesando lote de {limit} informes...")
+
     processed_count = 0
-    
+
     for index, row in rows_to_process.head(limit).iterrows():
         titulo = row['Titulo']
         print(f"🧠 [{processed_count + 1}/{limit}] Analizando: {titulo}...")
-        
+
         analisis = analyze_text(row['Texto_Completo'])
-        
+
         if analisis == "RATE_LIMIT":
             print("🛑 Guardando progreso y deteniendo la ejecución hasta mañana.")
             break
-            
+
         if analisis:
             df.loc[index, 'Tematica_IA'] = analisis['tematica']
             df.loc[index, 'Resumen_IA'] = analisis['resumen_ejecutivo']
@@ -127,12 +140,12 @@ def main():
         else:
             df.loc[index, 'Tematica_IA'] = "Error de procesamiento"
             processed_count += 1
-            
-        time.sleep(2) 
-            
+
+        time.sleep(2)
+
     print(f"💾 Guardando {processed_count} nuevos análisis en el CSV...")
     df.to_csv(CSV_FILE, index=False, encoding='utf-8')
-    
+
     remaining = total_pending - processed_count
     print(f"✅ Lote completado. Quedan {remaining} pendientes.")
 
