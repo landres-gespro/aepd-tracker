@@ -9,13 +9,6 @@ from pydantic import BaseModel, Field, ValidationError
 CSV_FILE = "data/resultados.csv"
 BATCH_SIZE = 25
 
-# Modelos de respaldo: si Groq jubila uno, salta solo al siguiente
-MODELOS = [
-    "openai/gpt-oss-120b",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "llama-3.1-8b-instant",
-]
-
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 class AnalisisResolucion(BaseModel):
@@ -32,13 +25,7 @@ def analyze_text(texto):
 
     texto_input = str(texto)[:6000]
 
-    prompt = f"""Eres un asistente legal experto en dictámenes del Gabinete Jurídico de la AEPD.
-El texto que recibirás es una CONSULTA jurídica (no una sanción): alguien pregunta y el Gabinete responde.
-DEBES devolver EXCLUSIVAMENTE un objeto JSON con EXACTAMENTE estas 6 claves:
-"tematica", "resumen_ejecutivo", "hechos_principales", "resolucion_final", "normativas_infringidas", "palabras_clave".
-Si no encuentras información para una clave, usa el string "No especificado" o una lista vacía [].
-
-prompt = f"""Eres un asistente legal experto en la AEPD. Analiza el texto y extrae la información.
+    prompt = f"""Eres un asistente legal experto en la AEPD. Analiza el texto y extrae la información.
 DEBES devolver EXCLUSIVAMENTE un objeto JSON con EXACTAMENTE estas 6 claves:
 "tematica", "resumen_ejecutivo", "hechos_principales", "resolucion_final", "normativas_infringidas", "palabras_clave".
 Si no encuentras información para una clave, usa el string "No especificado" o una lista vacía [].
@@ -57,36 +44,35 @@ TEXTO A ANALIZAR:
 {texto_input}
 """
 
-    for modelo in MODELOS:
-        try:
-            chat_completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "Eres un asistente legal. Devuelve SOLO un JSON válido, sin texto adicional, sin markdown, sin explicaciones."},
-                    {"role": "user", "content": prompt}
-                ],
-                model=modelo,
-                response_format={"type": "json_object"},
-                temperature=0.1
-            )
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Eres un asistente legal. Devuelve SOLO un JSON válido, sin texto adicional, sin markdown, sin explicaciones."},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"},
+            temperature=0.1
+        )
 
-            response_json = chat_completion.choices[0].message.content
+        response_json = chat_completion.choices[0].message.content
 
-            if response_json.startswith("```json"):
-                response_json = response_json[7:-3].strip()
+        if response_json.startswith("```json"):
+            response_json = response_json[7:-3].strip()
 
-            data = json.loads(response_json)
-            valid_data = AnalisisResolucion(**data)
-            return valid_data.model_dump()
+        data = json.loads(response_json)
+        valid_data = AnalisisResolucion(**data)
+        return valid_data.model_dump()
 
-        except Exception as e:
-            if "429" in str(e):
-                print("   🛑 LÍMITE DIARIO DE GROQ ALCANZADO. Deteniendo el lote de hoy.")
-                return "RATE_LIMIT"
-            print(f"   ⚠️ Modelo {modelo} no disponible, probando el siguiente...")
-            continue
-
-    print("   ❌ Todos los modelos fallaron.")
-    return None
+    except ValidationError:
+        print("   ⚠️ Error de formato: La IA intentó inventarse claves nuevas.")
+        return None
+    except Exception as e:
+        if "429" in str(e):
+            print("   🛑 LÍMITE DIARIO DE GROQ ALCANZADO. Deteniendo el lote de hoy.")
+            return "RATE_LIMIT"
+        print(f"   ❌ Error inesperado: {e}")
+        return None
 
 def main():
     if not os.path.exists(CSV_FILE):
@@ -107,14 +93,14 @@ def main():
     rows_to_process = df[mask]
 
     total_pending = len(rows_to_process)
-    print(f"📊 Total de informes pendientes: {total_pending}")
+    print(f"📊 Total de resoluciones pendientes: {total_pending}")
 
     if total_pending == 0:
         print("✅ Todo está analizado.")
         return
 
     limit = min(BATCH_SIZE, total_pending)
-    print(f"🚀 Procesando lote de {limit} informes...")
+    print(f"🚀 Procesando lote de {limit} resoluciones...")
 
     processed_count = 0
 
