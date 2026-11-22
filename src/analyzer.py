@@ -50,7 +50,7 @@ TEXTO A ANALIZAR:
                 {"role": "system", "content": "Eres un asistente legal. Devuelve SOLO un JSON válido, sin texto adicional, sin markdown, sin explicaciones."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-specdec",
+            model="openai/gpt-oss-120b",
             response_format={"type": "json_object"},
             temperature=0.1
         )
