@@ -112,7 +112,10 @@ def main():
     fails = load_fails()
 
     pending = [e for e in index
-               if e["id"] not in processed and fails.get(e["id"], 0) < 3]
+               if e["id"] not in processed
+               and fails.get(e["id"], 0) < 3
+               and e["year"] not in ("", "9999", "2030")
+               and 2016 <= int(e["year"]) <= 2026]
 
     print(f"📚 Censo único: {len(index)} | Procesadas: {len(processed)} | Pendientes: {len(pending)}")
     if not pending:
