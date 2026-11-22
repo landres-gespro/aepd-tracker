@@ -11,48 +11,37 @@ DATA_FILE = "data/resultados.csv"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
-CSV_COLUMNS = ["Titulo", "Link_PDF", "Resumen_AEPD", "Texto_Completo", "Fecha_Registro"]
+BASE_COLUMNS = ["Titulo", "Link_PDF", "Resumen_AEPD", "Texto_Completo"]
+FECHA_COL = "Fecha_Registro"
 
 def hoy():
-    """Fecha de hoy en formato ISO (AAAA-MM-DD), perfecta para filtrar por rangos."""
     return datetime.now().strftime("%Y-%m-%d")
 
-def get_processed_links():
-    """Enlaces de PDF que ya tenemos en el CSV (para no duplicar)."""
-    processed = set()
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                processed.add(row.get('Link_PDF', ''))
-    return processed
-
-def migrate_csv():
-    """Si el CSV es antiguo (4 columnas), le añade Fecha_Registro vacía una sola vez."""
+def leer_csv_completo():
+    """Lee el CSV manteniendo TODAS las columnas existentes."""
     if not os.path.exists(DATA_FILE):
-        return
+        return [], []
     with open(DATA_FILE, mode='r', newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
-        if "Fecha_Registro" in fieldnames:
-            return  # ya está migrado, no tocamos nada
         rows = list(reader)
+    return fieldnames, rows
 
-    with open(DATA_FILE, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(CSV_COLUMNS)
-        for row in rows:
-            writer.writerow([
-                row.get("Titulo", ""),
-                row.get("Link_PDF", ""),
-                row.get("Resumen_AEPD", ""),
-                row.get("Texto_Completo", ""),
-                "",  # las filas antiguas no tienen fecha conocida
-            ])
-    print(f"🔄 CSV migrado: columna Fecha_Registro añadida ({len(rows)} filas antiguas quedan sin fecha).")
+def get_processed_links(rows):
+    return {row.get('Link_PDF', '') for row in rows if row.get('Link_PDF')}
+
+def migrate_csv(fieldnames, rows):
+    """Añade Fecha_Registro al final si no existe, preservando todas las columnas."""
+    if FECHA_COL in fieldnames:
+        return fieldnames, rows  # ya existe, no tocamos nada
+
+    nuevos_fieldnames = list(fieldnames) + [FECHA_COL]
+    for row in rows:
+        row[FECHA_COL] = ""  # filas antiguas sin fecha conocida
+    print(f"🔄 CSV migrado: columna {FECHA_COL} añadida al final ({len(rows)} filas preservadas).")
+    return nuevos_fieldnames, rows
 
 def download_pdf_text(url):
-    """Descarga el PDF en memoria y extrae todo el texto."""
     try:
         response = requests.get(url, headers=HEADERS, timeout=30)
         response.raise_for_status()
@@ -61,6 +50,13 @@ def download_pdf_text(url):
         return text.replace('\n', ' ').replace('\r', ' ').strip()
     except Exception as e:
         return f"Error extrayendo PDF: {e}"
+
+def guardar_csv_completo(fieldnames, rows):
+    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+    with open(DATA_FILE, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 def main():
     print("🤖 Conectando al canal RSS oficial de la AEPD...")
@@ -72,38 +68,52 @@ def main():
 
     print(f"📡 Encontradas {len(feed.entries)} resoluciones recientes en el RSS.")
 
-    # Aseguramos que el CSV tenga la columna de fecha (migración única)
-    migrate_csv()
+    # Leemos el CSV con TODAS sus columnas
+    fieldnames, rows = leer_csv_completo()
 
-    processed_links = get_processed_links()
+    # Si el CSV aún no existe, creamos la estructura base + fecha
+    if not fieldnames:
+        fieldnames = BASE_COLUMNS + [FECHA_COL]
+        rows = []
+
+    # Migración única: añadir Fecha_Registro preservando todo lo existente
+    fieldnames, rows = migrate_csv(fieldnames, rows)
+
+    processed_links = get_processed_links(rows)
     new_entries = [entry for entry in feed.entries if entry.link not in processed_links]
 
     if not new_entries:
-        print("✅ No hay resoluciones nuevas que no tengamos ya en nuestra base de datos.")
+        print("✅ No hay resoluciones nuevas.")
+        # Aun así, guardamos por si se hizo la migración
+        if FECHA_COL in fieldnames:
+            guardar_csv_completo(fieldnames, rows)
         sys.exit(0)
 
     print(f"🚀 Procesando {len(new_entries)} resoluciones NUEVAS...")
+    fecha = hoy()
 
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    file_exists = os.path.isfile(DATA_FILE)
-    fecha = hoy()  # todas las entradas de esta ejecución comparten la fecha del día
+    for entry in new_entries:
+        titulo = entry.get('title', 'Sin Titulo')
+        link = entry.get('link', '')
+        resumen = entry.get('summary', '').replace('\n', ' ').replace('\r', ' ')
+        print(f"📄 Procesando {titulo}...")
+        texto = download_pdf_text(link)
 
-    with open(DATA_FILE, mode='a', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        if not file_exists:
-            writer.writerow(CSV_COLUMNS)
+        # Construimos la nueva fila respetando el orden de fieldnames
+        nueva_fila = {col: "" for col in fieldnames}
+        nueva_fila["Titulo"] = titulo
+        nueva_fila["Link_PDF"] = link
+        nueva_fila["Resumen_AEPD"] = resumen
+        nueva_fila["Texto_Completo"] = texto[:3000] + "..."
+        nueva_fila[FECHA_COL] = fecha
 
-        for entry in new_entries:
-            titulo = entry.get('title', 'Sin Titulo')
-            link = entry.get('link', '')
-            resumen = entry.get('summary', '').replace('\n', ' ').replace('\r', ' ')
+        # Si existen columnas de IA, las dejamos vacías para que el analyzer las rellene
+        # (no hace falta asignar nada: ya están en "" por defecto)
 
-            print(f"📄 Procesando {titulo}...")
-            texto = download_pdf_text(link)
+        rows.append(nueva_fila)
+        print(f"💾 Guardado con fecha de registro {fecha}.")
 
-            writer.writerow([titulo, link, resumen, texto[:3000] + "...", fecha])
-            print(f"💾 Guardado con fecha de registro {fecha}.")
-
+    guardar_csv_completo(fieldnames, rows)
     print("✅ Ciclo completado con éxito.")
 
 if __name__ == "__main__":
